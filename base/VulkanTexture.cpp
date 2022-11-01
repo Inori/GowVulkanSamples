@@ -76,7 +76,7 @@ namespace vks
 		mipLevels = ktxTexture->numLevels;
 
 		ktx_uint8_t *ktxTextureData = ktxTexture_GetData(ktxTexture);
-		ktx_size_t ktxTextureSize = ktxTexture_GetSize(ktxTexture);
+		ktx_size_t ktxTextureSize = ktxTexture_GetDataSize(ktxTexture);
 
 		// Get device properties for the requested texture format
 		VkFormatProperties formatProperties;
@@ -521,7 +521,7 @@ namespace vks
 		mipLevels = ktxTexture->numLevels;
 
 		ktx_uint8_t *ktxTextureData = ktxTexture_GetData(ktxTexture);
-		ktx_size_t ktxTextureSize = ktxTexture_GetSize(ktxTexture);
+		ktx_size_t ktxTextureSize = ktxTexture_GetDataSize(ktxTexture);
 
 		VkMemoryAllocateInfo memAllocInfo = vks::initializers::memoryAllocateInfo();
 		VkMemoryRequirements memReqs;
@@ -705,7 +705,7 @@ namespace vks
 		mipLevels = ktxTexture->numLevels;
 
 		ktx_uint8_t *ktxTextureData = ktxTexture_GetData(ktxTexture);
-		ktx_size_t ktxTextureSize = ktxTexture_GetSize(ktxTexture);
+		ktx_size_t ktxTextureSize = ktxTexture_GetDataSize(ktxTexture);
 
 		VkMemoryAllocateInfo memAllocInfo = vks::initializers::memoryAllocateInfo();
 		VkMemoryRequirements memReqs;

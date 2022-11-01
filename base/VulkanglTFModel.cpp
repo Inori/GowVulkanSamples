@@ -312,7 +312,7 @@ void vkglTF::Texture::fromglTfImage(tinygltf::Image &gltfimage, std::string path
 		mipLevels = ktxTexture->numLevels;
 
 		ktx_uint8_t* ktxTextureData = ktxTexture_GetData(ktxTexture);
-		ktx_size_t ktxTextureSize = ktxTexture_GetSize(ktxTexture);
+		ktx_size_t ktxTextureSize = ktxTexture_GetDataSize(ktxTexture);
 		// @todo: Use ktxTexture_GetVkFormat(ktxTexture)
 		format = VK_FORMAT_R8G8B8A8_UNORM;
 
