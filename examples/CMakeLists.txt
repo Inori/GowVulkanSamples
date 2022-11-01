@@ -31,10 +31,10 @@ function(buildExample EXAMPLE_NAME)
 	file(GLOB README_FILES "${EXAMPLE_FOLDER}/*.md")
 	if(WIN32)
 		add_executable(${EXAMPLE_NAME} WIN32 ${MAIN_CPP} ${SOURCE} ${MAIN_HEADER} ${SHADERS_GLSL} ${SHADERS_HLSL} ${README_FILES})
-		target_link_libraries(${EXAMPLE_NAME} base ${Vulkan_LIBRARY} ${WINLIBS})
+		target_link_libraries(${EXAMPLE_NAME} base ktx ${Vulkan_LIBRARY} ${WINLIBS})
 	else(WIN32)
 		add_executable(${EXAMPLE_NAME} ${MAIN_CPP} ${SOURCE} ${MAIN_HEADER} ${SHADERS_GLSL} ${SHADERS_HLSL} ${README_FILES})
-		target_link_libraries(${EXAMPLE_NAME} base )
+		target_link_libraries(${EXAMPLE_NAME} base ktx )
 	endif(WIN32)
 
 	set_target_properties(${EXAMPLE_NAME} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
@@ -78,7 +78,7 @@ function(buildExamples)
 endfunction(buildExamples)
 
 set(EXAMPLES
-	texture
+	meshparticles
 )
 
 buildExamples()
