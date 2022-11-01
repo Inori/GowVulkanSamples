@@ -17,7 +17,7 @@
  */
 
 #if defined(_WIN32)
-#define _CRT_SECURE_NO_WARNINGS
+//#define _CRT_SECURE_NO_WARNINGS
 #endif
 
 #include <stdlib.h>
@@ -2321,7 +2321,7 @@ ktxTexture2_inflateZstdInt(ktxTexture2* This, ktx_uint8_t* pDeflatedData,
     DECLARE_PROTECTED(ktxTexture);
     ktx_uint32_t levelIndexByteLength =
                             This->numLevels * sizeof(ktxLevelIndexEntry);
-    uint32_t levelOffset = 0;
+    ktx_size_t levelOffset = 0;
     ktxLevelIndexEntry* cindex = This->_private->_levelIndex;
     ktxLevelIndexEntry* nindex;
     ktx_uint32_t uncompressedLevelAlignment;

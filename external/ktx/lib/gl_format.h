@@ -92,7 +92,7 @@ MODIFICATIONS for use in libktx
 #include "vkformat_enum.h"
 
 #if defined(_WIN32) && !defined(__MINGW32__)
-#define NOMINMAX
+//#define NOMINMAX
 #ifndef __cplusplus
 #undef inline
 #define inline __inline
