@@ -1,73 +1,112 @@
 /*
-* Vulkan Example - Disintegrating Meshes with Particles in 'God of War'
+* Vulkan Example - Deferred shading with multiple render targets (aka G-Buffer) example
 *
-* Copyright (C) 2016-2017 by Sascha Willems - www.saschawillems.de
+* Copyright (C) 2016 by Sascha Willems - www.saschawillems.de
 *
 * This code is licensed under the MIT license (MIT) (http://opensource.org/licenses/MIT)
 */
 
 #include "vulkanexamplebase.h"
-#include <ktx.h>
-#include <ktxvulkan.h>
+#include "VulkanglTFModel.h"
 
-#define VERTEX_BUFFER_BIND_ID 0
 #define ENABLE_VALIDATION false
 
-// Vertex layout for this example
-struct Vertex {
-	float pos[3];
-	float uv[2];
-	float normal[3];
-};
+// Texture properties
+#define TEX_DIM 2048
+#define TEX_FILTER VK_FILTER_LINEAR
+
+// Offscreen frame buffer properties
+#define FB_DIM TEX_DIM
 
 class VulkanExample : public VulkanExampleBase
 {
 public:
-	// Contains all Vulkan objects that are required to store and use a texture
-	// Note that this repository contains a texture class (VulkanTexture.hpp) that encapsulates texture loading functionality in a class that is used in subsequent demos
-	struct Texture {
-		VkSampler sampler;
-		VkImage image;
-		VkImageLayout imageLayout;
-		VkDeviceMemory deviceMemory;
-		VkImageView view;
-		uint32_t width, height;
-		uint32_t mipLevels;
-	} texture;
+	int32_t debugDisplayTarget = 0;
 
 	struct {
-		VkPipelineVertexInputStateCreateInfo inputState;
-		std::vector<VkVertexInputBindingDescription> bindingDescriptions;
-		std::vector<VkVertexInputAttributeDescription> attributeDescriptions;
-	} vertices;
+		struct {
+			vks::Texture2D colorMap;
+			vks::Texture2D normalMap;
+		} model;
+		struct {
+			vks::Texture2D colorMap;
+			vks::Texture2D normalMap;
+		} floor;
+	} textures;
 
-	vks::Buffer vertexBuffer;
-	vks::Buffer indexBuffer;
-	uint32_t indexCount;
-
-	vks::Buffer uniformBufferVS;
+	struct {
+		vkglTF::Model model;
+		vkglTF::Model floor;
+	} models;
 
 	struct {
 		glm::mat4 projection;
-		glm::mat4 modelView;
-		glm::vec4 viewPos;
-		float lodBias = 0.0f;
-	} uboVS;
+		glm::mat4 model;
+		glm::mat4 view;
+		glm::vec4 instancePos[3];
+	} uboOffscreenVS;
+
+	struct Light {
+		glm::vec4 position;
+		glm::vec3 color;
+		float radius;
+	};
 
 	struct {
-		VkPipeline solid;
-	} pipelines;
+		Light lights[6];
+		glm::vec4 viewPos;
+		int debugDisplayTarget = 0;
+	} uboComposition;
 
+	struct {
+		vks::Buffer offscreen;
+		vks::Buffer composition;
+	} uniformBuffers;
+
+	struct {
+		VkPipeline offscreen;
+		VkPipeline composition;
+	} pipelines;
 	VkPipelineLayout pipelineLayout;
+
+	struct {
+		VkDescriptorSet model;
+		VkDescriptorSet floor;
+	} descriptorSets;
+
 	VkDescriptorSet descriptorSet;
 	VkDescriptorSetLayout descriptorSetLayout;
 
+	// Framebuffer for offscreen rendering
+	struct FrameBufferAttachment {
+		VkImage image;
+		VkDeviceMemory mem;
+		VkImageView view;
+		VkFormat format;
+	};
+	struct FrameBuffer {
+		int32_t width, height;
+		VkFramebuffer frameBuffer;
+		FrameBufferAttachment position, normal, albedo;
+		FrameBufferAttachment depth;
+		VkRenderPass renderPass;
+	} offScreenFrameBuf;
+
+	// One sampler for the frame buffer color attachments
+	VkSampler colorSampler;
+
+	VkCommandBuffer offScreenCmdBuffer = VK_NULL_HANDLE;
+
+	// Semaphore used to synchronize between offscreen and final scene rendering
+	VkSemaphore offscreenSemaphore = VK_NULL_HANDLE;
+
 	VulkanExample() : VulkanExampleBase(ENABLE_VALIDATION)
 	{
-		title = "Texture loading";
-		camera.type = Camera::CameraType::lookat;
-		camera.setPosition(glm::vec3(0.0f, 0.0f, -2.5f));
-		camera.setRotation(glm::vec3(0.0f, 15.0f, 0.0f));
+		title = "Deferred shading";
+		camera.type = Camera::CameraType::firstperson;
+		camera.movementSpeed = 5.0f;
+		camera.position = { 2.15f, 0.3f, -8.75f };
+		camera.setRotation(glm::vec3(-0.75f, 12.5f, 0.0f));
 		camera.setPerspective(60.0f, (float)width / (float)height, 0.1f, 256.0f);
 	}
 
@@ -76,16 +115,49 @@ public:
 		// Clean up used Vulkan resources
 		// Note : Inherited destructor cleans up resources stored in base class
 
-		destroyTextureImage(texture);
+		vkDestroySampler(device, colorSampler, nullptr);
 
-		vkDestroyPipeline(device, pipelines.solid, nullptr);
+		// Frame buffer
+
+		// Color attachments
+		vkDestroyImageView(device, offScreenFrameBuf.position.view, nullptr);
+		vkDestroyImage(device, offScreenFrameBuf.position.image, nullptr);
+		vkFreeMemory(device, offScreenFrameBuf.position.mem, nullptr);
+
+		vkDestroyImageView(device, offScreenFrameBuf.normal.view, nullptr);
+		vkDestroyImage(device, offScreenFrameBuf.normal.image, nullptr);
+		vkFreeMemory(device, offScreenFrameBuf.normal.mem, nullptr);
+
+		vkDestroyImageView(device, offScreenFrameBuf.albedo.view, nullptr);
+		vkDestroyImage(device, offScreenFrameBuf.albedo.image, nullptr);
+		vkFreeMemory(device, offScreenFrameBuf.albedo.mem, nullptr);
+
+		// Depth attachment
+		vkDestroyImageView(device, offScreenFrameBuf.depth.view, nullptr);
+		vkDestroyImage(device, offScreenFrameBuf.depth.image, nullptr);
+		vkFreeMemory(device, offScreenFrameBuf.depth.mem, nullptr);
+
+		vkDestroyFramebuffer(device, offScreenFrameBuf.frameBuffer, nullptr);
+
+		vkDestroyPipeline(device, pipelines.composition, nullptr);
+		vkDestroyPipeline(device, pipelines.offscreen, nullptr);
 
 		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+
 		vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
 
-		vertexBuffer.destroy();
-		indexBuffer.destroy();
-		uniformBufferVS.destroy();
+		// Uniform buffers
+		uniformBuffers.offscreen.destroy();
+		uniformBuffers.composition.destroy();
+
+		vkDestroyRenderPass(device, offScreenFrameBuf.renderPass, nullptr);
+
+		textures.model.colorMap.destroy();
+		textures.model.normalMap.destroy();
+		textures.floor.colorMap.destroy();
+		textures.floor.normalMap.destroy();
+
+		vkDestroySemaphore(device, offscreenSemaphore, nullptr);
 	}
 
 	// Enable physical device features required for this example
@@ -94,362 +166,279 @@ public:
 		// Enable anisotropic filtering if supported
 		if (deviceFeatures.samplerAnisotropy) {
 			enabledFeatures.samplerAnisotropy = VK_TRUE;
-		};
+		}
+	};
+
+	// Create a frame buffer attachment
+	void createAttachment(
+		VkFormat format,
+		VkImageUsageFlagBits usage,
+		FrameBufferAttachment* attachment)
+	{
+		VkImageAspectFlags aspectMask = 0;
+		VkImageLayout imageLayout;
+
+		attachment->format = format;
+
+		if (usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)
+		{
+			aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+			imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		}
+		if (usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)
+		{
+			aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+			if (format >= VK_FORMAT_D16_UNORM_S8_UINT)
+				aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
+			imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+		}
+
+		assert(aspectMask > 0);
+
+		VkImageCreateInfo image = vks::initializers::imageCreateInfo();
+		image.imageType = VK_IMAGE_TYPE_2D;
+		image.format = format;
+		image.extent.width = offScreenFrameBuf.width;
+		image.extent.height = offScreenFrameBuf.height;
+		image.extent.depth = 1;
+		image.mipLevels = 1;
+		image.arrayLayers = 1;
+		image.samples = VK_SAMPLE_COUNT_1_BIT;
+		image.tiling = VK_IMAGE_TILING_OPTIMAL;
+		image.usage = usage | VK_IMAGE_USAGE_SAMPLED_BIT;
+
+		VkMemoryAllocateInfo memAlloc = vks::initializers::memoryAllocateInfo();
+		VkMemoryRequirements memReqs;
+
+		VK_CHECK_RESULT(vkCreateImage(device, &image, nullptr, &attachment->image));
+		vkGetImageMemoryRequirements(device, attachment->image, &memReqs);
+		memAlloc.allocationSize = memReqs.size;
+		memAlloc.memoryTypeIndex = vulkanDevice->getMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+		VK_CHECK_RESULT(vkAllocateMemory(device, &memAlloc, nullptr, &attachment->mem));
+		VK_CHECK_RESULT(vkBindImageMemory(device, attachment->image, attachment->mem, 0));
+
+		VkImageViewCreateInfo imageView = vks::initializers::imageViewCreateInfo();
+		imageView.viewType = VK_IMAGE_VIEW_TYPE_2D;
+		imageView.format = format;
+		imageView.subresourceRange = {};
+		imageView.subresourceRange.aspectMask = aspectMask;
+		imageView.subresourceRange.baseMipLevel = 0;
+		imageView.subresourceRange.levelCount = 1;
+		imageView.subresourceRange.baseArrayLayer = 0;
+		imageView.subresourceRange.layerCount = 1;
+		imageView.image = attachment->image;
+		VK_CHECK_RESULT(vkCreateImageView(device, &imageView, nullptr, &attachment->view));
 	}
 
-	/*
-		Upload texture image data to the GPU
-
-		Vulkan offers two types of image tiling (memory layout):
-
-		Linear tiled images:
-			These are stored as is and can be copied directly to. But due to the linear nature they're not a good match for GPUs and format and feature support is very limited.
-			It's not advised to use linear tiled images for anything else than copying from host to GPU if buffer copies are not an option.
-			Linear tiling is thus only implemented for learning purposes, one should always prefer optimal tiled image.
-
-		Optimal tiled images:
-			These are stored in an implementation specific layout matching the capability of the hardware. They usually support more formats and features and are much faster.
-			Optimal tiled images are stored on the device and not accessible by the host. So they can't be written directly to (like liner tiled images) and always require
-			some sort of data copy, either from a buffer or	a linear tiled image.
-
-		In Short: Always use optimal tiled images for rendering.
-	*/
-	void loadTexture()
+	// Prepare a new framebuffer and attachments for offscreen rendering (G-Buffer)
+	void prepareOffscreenFramebuffer()
 	{
-		// We use the Khronos texture format (https://www.khronos.org/opengles/sdk/tools/KTX/file_format_spec/)
-		std::string filename = getAssetPath() + "textures/metalplate01_rgba.ktx";
-		// Texture data contains 4 channels (RGBA) with unnormalized 8-bit values, this is the most commonly supported format
-		VkFormat format = VK_FORMAT_R8G8B8A8_UNORM;
+		offScreenFrameBuf.width = FB_DIM;
+		offScreenFrameBuf.height = FB_DIM;
 
-		ktxResult result;
-		ktxTexture* ktxTexture;
+		// Color attachments
 
-#if defined(__ANDROID__)
-		// Textures are stored inside the apk on Android (compressed)
-		// So they need to be loaded via the asset manager
-		AAsset* asset = AAssetManager_open(androidApp->activity->assetManager, filename.c_str(), AASSET_MODE_STREAMING);
-		if (!asset) {
-			vks::tools::exitFatal("Could not load texture from " + filename + "\n\nThe file may be part of the additional asset pack.\n\nRun \"download_assets.py\" in the repository root to download the latest version.", -1);
-		}
-		size_t size = AAsset_getLength(asset);
-		assert(size > 0);
+		// (World space) Positions
+		createAttachment(
+			VK_FORMAT_R16G16B16A16_SFLOAT,
+			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+			&offScreenFrameBuf.position);
 
-		ktx_uint8_t *textureData = new ktx_uint8_t[size];
-		AAsset_read(asset, textureData, size);
-		AAsset_close(asset);
-		result = ktxTexture_CreateFromMemory(textureData, size, KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &ktxTexture);
-		delete[] textureData;
-#else
-		if (!vks::tools::fileExists(filename)) {
-			vks::tools::exitFatal("Could not load texture from " + filename + "\n\nThe file may be part of the additional asset pack.\n\nRun \"download_assets.py\" in the repository root to download the latest version.", -1);
-		}
-		result = ktxTexture_CreateFromNamedFile(filename.c_str(), KTX_TEXTURE_CREATE_LOAD_IMAGE_DATA_BIT, &ktxTexture);
-#endif
-		assert(result == KTX_SUCCESS);
+		// (World space) Normals
+		createAttachment(
+			VK_FORMAT_R16G16B16A16_SFLOAT,
+			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+			&offScreenFrameBuf.normal);
 
-		// Get properties required for using and upload texture data from the ktx texture object
-		texture.width = ktxTexture->baseWidth;
-		texture.height = ktxTexture->baseHeight;
-		texture.mipLevels = ktxTexture->numLevels;
-		ktx_uint8_t *ktxTextureData = ktxTexture_GetData(ktxTexture);
-		ktx_size_t ktxTextureSize = ktxTexture_GetDataSize(ktxTexture);
+		// Albedo (color)
+		createAttachment(
+			VK_FORMAT_R8G8B8A8_UNORM,
+			VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+			&offScreenFrameBuf.albedo);
 
-		// We prefer using staging to copy the texture data to a device local optimal image
-		VkBool32 useStaging = true;
+		// Depth attachment
 
-		// Only use linear tiling if forced
-		bool forceLinearTiling = false;
-		if (forceLinearTiling) {
-			// Don't use linear if format is not supported for (linear) shader sampling
-			// Get device properties for the requested texture format
-			VkFormatProperties formatProperties;
-			vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &formatProperties);
-			useStaging = !(formatProperties.linearTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT);
-		}
+		// Find a suitable depth format
+		VkFormat attDepthFormat;
+		VkBool32 validDepthFormat = vks::tools::getSupportedDepthFormat(physicalDevice, &attDepthFormat);
+		assert(validDepthFormat);
 
-		VkMemoryAllocateInfo memAllocInfo = vks::initializers::memoryAllocateInfo();
-		VkMemoryRequirements memReqs = {};
+		createAttachment(
+			attDepthFormat,
+			VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+			&offScreenFrameBuf.depth);
 
-		if (useStaging) {
-			// Copy data to an optimal tiled image
-			// This loads the texture data into a host local buffer that is copied to the optimal tiled image on the device
+		// Set up separate renderpass with references to the color and depth attachments
+		std::array<VkAttachmentDescription, 4> attachmentDescs = {};
 
-			// Create a host-visible staging buffer that contains the raw image data
-			// This buffer will be the data source for copying texture data to the optimal tiled image on the device
-			VkBuffer stagingBuffer;
-			VkDeviceMemory stagingMemory;
-
-			VkBufferCreateInfo bufferCreateInfo = vks::initializers::bufferCreateInfo();
-			bufferCreateInfo.size = ktxTextureSize;
-			// This buffer is used as a transfer source for the buffer copy
-			bufferCreateInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-			bufferCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-			VK_CHECK_RESULT(vkCreateBuffer(device, &bufferCreateInfo, nullptr, &stagingBuffer));
-
-			// Get memory requirements for the staging buffer (alignment, memory type bits)
-			vkGetBufferMemoryRequirements(device, stagingBuffer, &memReqs);
-			memAllocInfo.allocationSize = memReqs.size;
-			// Get memory type index for a host visible buffer
-			memAllocInfo.memoryTypeIndex = vulkanDevice->getMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-			VK_CHECK_RESULT(vkAllocateMemory(device, &memAllocInfo, nullptr, &stagingMemory));
-			VK_CHECK_RESULT(vkBindBufferMemory(device, stagingBuffer, stagingMemory, 0));
-
-			// Copy texture data into host local staging buffer
-			uint8_t *data;
-			VK_CHECK_RESULT(vkMapMemory(device, stagingMemory, 0, memReqs.size, 0, (void **)&data));
-			memcpy(data, ktxTextureData, ktxTextureSize);
-			vkUnmapMemory(device, stagingMemory);
-
-			// Setup buffer copy regions for each mip level
-			std::vector<VkBufferImageCopy> bufferCopyRegions;
-			uint32_t offset = 0;
-
-			for (uint32_t i = 0; i < texture.mipLevels; i++) {
-				// Calculate offset into staging buffer for the current mip level
-				ktx_size_t offset;
-				KTX_error_code ret = ktxTexture_GetImageOffset(ktxTexture, i, 0, 0, &offset);
-				assert(ret == KTX_SUCCESS);
-				// Setup a buffer image copy structure for the current mip level
-				VkBufferImageCopy bufferCopyRegion = {};
-				bufferCopyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-				bufferCopyRegion.imageSubresource.mipLevel = i;
-				bufferCopyRegion.imageSubresource.baseArrayLayer = 0;
-				bufferCopyRegion.imageSubresource.layerCount = 1;
-				bufferCopyRegion.imageExtent.width = ktxTexture->baseWidth >> i;
-				bufferCopyRegion.imageExtent.height = ktxTexture->baseHeight >> i;
-				bufferCopyRegion.imageExtent.depth = 1;
-				bufferCopyRegion.bufferOffset = offset;
-				bufferCopyRegions.push_back(bufferCopyRegion);
+		// Init attachment properties
+		for (uint32_t i = 0; i < 4; ++i)
+		{
+			attachmentDescs[i].samples = VK_SAMPLE_COUNT_1_BIT;
+			attachmentDescs[i].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+			attachmentDescs[i].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+			attachmentDescs[i].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+			attachmentDescs[i].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+			if (i == 3)
+			{
+				attachmentDescs[i].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+				attachmentDescs[i].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 			}
-
-			// Create optimal tiled target image on the device
-			VkImageCreateInfo imageCreateInfo = vks::initializers::imageCreateInfo();
-			imageCreateInfo.imageType = VK_IMAGE_TYPE_2D;
-			imageCreateInfo.format = format;
-			imageCreateInfo.mipLevels = texture.mipLevels;
-			imageCreateInfo.arrayLayers = 1;
-			imageCreateInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-			imageCreateInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
-			imageCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-			// Set initial layout of the image to undefined
-			imageCreateInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-			imageCreateInfo.extent = { texture.width, texture.height, 1 };
-			imageCreateInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-			VK_CHECK_RESULT(vkCreateImage(device, &imageCreateInfo, nullptr, &texture.image));
-
-			vkGetImageMemoryRequirements(device, texture.image, &memReqs);
-			memAllocInfo.allocationSize = memReqs.size;
-			memAllocInfo.memoryTypeIndex = vulkanDevice->getMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-			VK_CHECK_RESULT(vkAllocateMemory(device, &memAllocInfo, nullptr, &texture.deviceMemory));
-			VK_CHECK_RESULT(vkBindImageMemory(device, texture.image, texture.deviceMemory, 0));
-
-			VkCommandBuffer copyCmd = vulkanDevice->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
-
-			// Image memory barriers for the texture image
-
-			// The sub resource range describes the regions of the image that will be transitioned using the memory barriers below
-			VkImageSubresourceRange subresourceRange = {};
-			// Image only contains color data
-			subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-			// Start at first mip level
-			subresourceRange.baseMipLevel = 0;
-			// We will transition on all mip levels
-			subresourceRange.levelCount = texture.mipLevels;
-			// The 2D texture only has one layer
-			subresourceRange.layerCount = 1;
-
-			// Transition the texture image layout to transfer target, so we can safely copy our buffer data to it.
-			VkImageMemoryBarrier imageMemoryBarrier = vks::initializers::imageMemoryBarrier();;
-			imageMemoryBarrier.image = texture.image;
-			imageMemoryBarrier.subresourceRange = subresourceRange;
-			imageMemoryBarrier.srcAccessMask = 0;
-			imageMemoryBarrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-			imageMemoryBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-			imageMemoryBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-
-			// Insert a memory dependency at the proper pipeline stages that will execute the image layout transition
-			// Source pipeline stage is host write/read execution (VK_PIPELINE_STAGE_HOST_BIT)
-			// Destination pipeline stage is copy command execution (VK_PIPELINE_STAGE_TRANSFER_BIT)
-			vkCmdPipelineBarrier(
-				copyCmd,
-				VK_PIPELINE_STAGE_HOST_BIT,
-				VK_PIPELINE_STAGE_TRANSFER_BIT,
-				0,
-				0, nullptr,
-				0, nullptr,
-				1, &imageMemoryBarrier);
-
-			// Copy mip levels from staging buffer
-			vkCmdCopyBufferToImage(
-				copyCmd,
-				stagingBuffer,
-				texture.image,
-				VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-				static_cast<uint32_t>(bufferCopyRegions.size()),
-				bufferCopyRegions.data());
-
-			// Once the data has been uploaded we transfer to the texture image to the shader read layout, so it can be sampled from
-			imageMemoryBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-			imageMemoryBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-			imageMemoryBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-			imageMemoryBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-			// Insert a memory dependency at the proper pipeline stages that will execute the image layout transition
-			// Source pipeline stage is copy command execution (VK_PIPELINE_STAGE_TRANSFER_BIT)
-			// Destination pipeline stage fragment shader access (VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT)
-			vkCmdPipelineBarrier(
-				copyCmd,
-				VK_PIPELINE_STAGE_TRANSFER_BIT,
-				VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-				0,
-				0, nullptr,
-				0, nullptr,
-				1, &imageMemoryBarrier);
-
-			// Store current layout for later reuse
-			texture.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-			vulkanDevice->flushCommandBuffer(copyCmd, queue, true);
-
-			// Clean up staging resources
-			vkFreeMemory(device, stagingMemory, nullptr);
-			vkDestroyBuffer(device, stagingBuffer, nullptr);
-		} else {
-			// Copy data to a linear tiled image
-
-			VkImage mappableImage;
-			VkDeviceMemory mappableMemory;
-
-			// Load mip map level 0 to linear tiling image
-			VkImageCreateInfo imageCreateInfo = vks::initializers::imageCreateInfo();
-			imageCreateInfo.imageType = VK_IMAGE_TYPE_2D;
-			imageCreateInfo.format = format;
-			imageCreateInfo.mipLevels = 1;
-			imageCreateInfo.arrayLayers = 1;
-			imageCreateInfo.samples = VK_SAMPLE_COUNT_1_BIT;
-			imageCreateInfo.tiling = VK_IMAGE_TILING_LINEAR;
-			imageCreateInfo.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
-			imageCreateInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-			imageCreateInfo.initialLayout = VK_IMAGE_LAYOUT_PREINITIALIZED;
-			imageCreateInfo.extent = { texture.width, texture.height, 1 };
-			VK_CHECK_RESULT(vkCreateImage(device, &imageCreateInfo, nullptr, &mappableImage));
-
-			// Get memory requirements for this image like size and alignment
-			vkGetImageMemoryRequirements(device, mappableImage, &memReqs);
-			// Set memory allocation size to required memory size
-			memAllocInfo.allocationSize = memReqs.size;
-			// Get memory type that can be mapped to host memory
-			memAllocInfo.memoryTypeIndex = vulkanDevice->getMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-			VK_CHECK_RESULT(vkAllocateMemory(device, &memAllocInfo, nullptr, &mappableMemory));
-			VK_CHECK_RESULT(vkBindImageMemory(device, mappableImage, mappableMemory, 0));
-
-			// Map image memory
-			void *data;
-			VK_CHECK_RESULT(vkMapMemory(device, mappableMemory, 0, memReqs.size, 0, &data));
-			// Copy image data of the first mip level into memory
-			memcpy(data, ktxTextureData, memReqs.size);
-			vkUnmapMemory(device, mappableMemory);
-
-			// Linear tiled images don't need to be staged and can be directly used as textures
-			texture.image = mappableImage;
-			texture.deviceMemory = mappableMemory;
-			texture.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-			// Setup image memory barrier transfer image to shader read layout
-			VkCommandBuffer copyCmd = vulkanDevice->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, true);
-
-			// The sub resource range describes the regions of the image we will be transition
-			VkImageSubresourceRange subresourceRange = {};
-			subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-			subresourceRange.baseMipLevel = 0;
-			subresourceRange.levelCount = 1;
-			subresourceRange.layerCount = 1;
-
-			// Transition the texture image layout to shader read, so it can be sampled from
-			VkImageMemoryBarrier imageMemoryBarrier = vks::initializers::imageMemoryBarrier();;
-			imageMemoryBarrier.image = texture.image;
-			imageMemoryBarrier.subresourceRange = subresourceRange;
-			imageMemoryBarrier.srcAccessMask = VK_ACCESS_HOST_WRITE_BIT;
-			imageMemoryBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-			imageMemoryBarrier.oldLayout = VK_IMAGE_LAYOUT_PREINITIALIZED;
-			imageMemoryBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-			// Insert a memory dependency at the proper pipeline stages that will execute the image layout transition
-			// Source pipeline stage is host write/read execution (VK_PIPELINE_STAGE_HOST_BIT)
-			// Destination pipeline stage fragment shader access (VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT)
-			vkCmdPipelineBarrier(
-				copyCmd,
-				VK_PIPELINE_STAGE_HOST_BIT,
-				VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-				0,
-				0, nullptr,
-				0, nullptr,
-				1, &imageMemoryBarrier);
-
-			vulkanDevice->flushCommandBuffer(copyCmd, queue, true);
+			else
+			{
+				attachmentDescs[i].initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+				attachmentDescs[i].finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			}
 		}
 
-		ktxTexture_Destroy(ktxTexture);
+		// Formats
+		attachmentDescs[0].format = offScreenFrameBuf.position.format;
+		attachmentDescs[1].format = offScreenFrameBuf.normal.format;
+		attachmentDescs[2].format = offScreenFrameBuf.albedo.format;
+		attachmentDescs[3].format = offScreenFrameBuf.depth.format;
 
-		// Create a texture sampler
-		// In Vulkan textures are accessed by samplers
-		// This separates all the sampling information from the texture data. This means you could have multiple sampler objects for the same texture with different settings
-		// Note: Similar to the samplers available with OpenGL 3.3
+		std::vector<VkAttachmentReference> colorReferences;
+		colorReferences.push_back({ 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL });
+		colorReferences.push_back({ 1, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL });
+		colorReferences.push_back({ 2, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL });
+
+		VkAttachmentReference depthReference = {};
+		depthReference.attachment = 3;
+		depthReference.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+		VkSubpassDescription subpass = {};
+		subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+		subpass.pColorAttachments = colorReferences.data();
+		subpass.colorAttachmentCount = static_cast<uint32_t>(colorReferences.size());
+		subpass.pDepthStencilAttachment = &depthReference;
+
+		// Use subpass dependencies for attachment layout transitions
+		std::array<VkSubpassDependency, 2> dependencies;
+
+		dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
+		dependencies[0].dstSubpass = 0;
+		dependencies[0].srcStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+		dependencies[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		dependencies[0].srcAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+		dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+		dependencies[0].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+
+		dependencies[1].srcSubpass = 0;
+		dependencies[1].dstSubpass = VK_SUBPASS_EXTERNAL;
+		dependencies[1].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		dependencies[1].dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+		dependencies[1].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+		dependencies[1].dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
+		dependencies[1].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+
+		VkRenderPassCreateInfo renderPassInfo = {};
+		renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+		renderPassInfo.pAttachments = attachmentDescs.data();
+		renderPassInfo.attachmentCount = static_cast<uint32_t>(attachmentDescs.size());
+		renderPassInfo.subpassCount = 1;
+		renderPassInfo.pSubpasses = &subpass;
+		renderPassInfo.dependencyCount = 2;
+		renderPassInfo.pDependencies = dependencies.data();
+
+		VK_CHECK_RESULT(vkCreateRenderPass(device, &renderPassInfo, nullptr, &offScreenFrameBuf.renderPass));
+
+		std::array<VkImageView, 4> attachments;
+		attachments[0] = offScreenFrameBuf.position.view;
+		attachments[1] = offScreenFrameBuf.normal.view;
+		attachments[2] = offScreenFrameBuf.albedo.view;
+		attachments[3] = offScreenFrameBuf.depth.view;
+
+		VkFramebufferCreateInfo fbufCreateInfo = {};
+		fbufCreateInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+		fbufCreateInfo.pNext = NULL;
+		fbufCreateInfo.renderPass = offScreenFrameBuf.renderPass;
+		fbufCreateInfo.pAttachments = attachments.data();
+		fbufCreateInfo.attachmentCount = static_cast<uint32_t>(attachments.size());
+		fbufCreateInfo.width = offScreenFrameBuf.width;
+		fbufCreateInfo.height = offScreenFrameBuf.height;
+		fbufCreateInfo.layers = 1;
+		VK_CHECK_RESULT(vkCreateFramebuffer(device, &fbufCreateInfo, nullptr, &offScreenFrameBuf.frameBuffer));
+
+		// Create sampler to sample from the color attachments
 		VkSamplerCreateInfo sampler = vks::initializers::samplerCreateInfo();
-		sampler.magFilter = VK_FILTER_LINEAR;
-		sampler.minFilter = VK_FILTER_LINEAR;
+		sampler.magFilter = VK_FILTER_NEAREST;
+		sampler.minFilter = VK_FILTER_NEAREST;
 		sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-		sampler.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-		sampler.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-		sampler.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+		sampler.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		sampler.addressModeV = sampler.addressModeU;
+		sampler.addressModeW = sampler.addressModeU;
 		sampler.mipLodBias = 0.0f;
-		sampler.compareOp = VK_COMPARE_OP_NEVER;
+		sampler.maxAnisotropy = 1.0f;
 		sampler.minLod = 0.0f;
-		// Set max level-of-detail to mip level count of the texture
-		sampler.maxLod = (useStaging) ? (float)texture.mipLevels : 0.0f;
-		// Enable anisotropic filtering
-		// This feature is optional, so we must check if it's supported on the device
-		if (vulkanDevice->features.samplerAnisotropy) {
-			// Use max. level of anisotropy for this example
-			sampler.maxAnisotropy = vulkanDevice->properties.limits.maxSamplerAnisotropy;
-			sampler.anisotropyEnable = VK_TRUE;
-		} else {
-			// The device does not support anisotropic filtering
-			sampler.maxAnisotropy = 1.0;
-			sampler.anisotropyEnable = VK_FALSE;
-		}
+		sampler.maxLod = 1.0f;
 		sampler.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
-		VK_CHECK_RESULT(vkCreateSampler(device, &sampler, nullptr, &texture.sampler));
-
-		// Create image view
-		// Textures are not directly accessed by the shaders and
-		// are abstracted by image views containing additional
-		// information and sub resource ranges
-		VkImageViewCreateInfo view = vks::initializers::imageViewCreateInfo();
-		view.viewType = VK_IMAGE_VIEW_TYPE_2D;
-		view.format = format;
-		view.components = { VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_G, VK_COMPONENT_SWIZZLE_B, VK_COMPONENT_SWIZZLE_A };
-		// The subresource range describes the set of mip levels (and array layers) that can be accessed through this image view
-		// It's possible to create multiple image views for a single image referring to different (and/or overlapping) ranges of the image
-		view.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		view.subresourceRange.baseMipLevel = 0;
-		view.subresourceRange.baseArrayLayer = 0;
-		view.subresourceRange.layerCount = 1;
-		// Linear tiling usually won't support mip maps
-		// Only set mip map count if optimal tiling is used
-		view.subresourceRange.levelCount = (useStaging) ? texture.mipLevels : 1;
-		// The view will be based on the texture's image
-		view.image = texture.image;
-		VK_CHECK_RESULT(vkCreateImageView(device, &view, nullptr, &texture.view));
+		VK_CHECK_RESULT(vkCreateSampler(device, &sampler, nullptr, &colorSampler));
 	}
 
-	// Free all Vulkan resources used by a texture object
-	void destroyTextureImage(Texture texture)
+	// Build command buffer for rendering the scene to the offscreen frame buffer attachments
+	void buildDeferredCommandBuffer()
 	{
-		vkDestroyImageView(device, texture.view, nullptr);
-		vkDestroyImage(device, texture.image, nullptr);
-		vkDestroySampler(device, texture.sampler, nullptr);
-		vkFreeMemory(device, texture.deviceMemory, nullptr);
+		if (offScreenCmdBuffer == VK_NULL_HANDLE)
+		{
+			offScreenCmdBuffer = vulkanDevice->createCommandBuffer(VK_COMMAND_BUFFER_LEVEL_PRIMARY, false);
+		}
+
+		// Create a semaphore used to synchronize offscreen rendering and usage
+		VkSemaphoreCreateInfo semaphoreCreateInfo = vks::initializers::semaphoreCreateInfo();
+		VK_CHECK_RESULT(vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &offscreenSemaphore));
+
+		VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
+
+		// Clear values for all attachments written in the fragment shader
+		std::array<VkClearValue, 4> clearValues;
+		clearValues[0].color = { { 0.0f, 0.0f, 0.0f, 0.0f } };
+		clearValues[1].color = { { 0.0f, 0.0f, 0.0f, 0.0f } };
+		clearValues[2].color = { { 0.0f, 0.0f, 0.0f, 0.0f } };
+		clearValues[3].depthStencil = { 1.0f, 0 };
+
+		VkRenderPassBeginInfo renderPassBeginInfo = vks::initializers::renderPassBeginInfo();
+		renderPassBeginInfo.renderPass = offScreenFrameBuf.renderPass;
+		renderPassBeginInfo.framebuffer = offScreenFrameBuf.frameBuffer;
+		renderPassBeginInfo.renderArea.extent.width = offScreenFrameBuf.width;
+		renderPassBeginInfo.renderArea.extent.height = offScreenFrameBuf.height;
+		renderPassBeginInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+		renderPassBeginInfo.pClearValues = clearValues.data();
+
+		VK_CHECK_RESULT(vkBeginCommandBuffer(offScreenCmdBuffer, &cmdBufInfo));
+
+		vkCmdBeginRenderPass(offScreenCmdBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+		VkViewport viewport = vks::initializers::viewport((float)offScreenFrameBuf.width, (float)offScreenFrameBuf.height, 0.0f, 1.0f);
+		vkCmdSetViewport(offScreenCmdBuffer, 0, 1, &viewport);
+
+		VkRect2D scissor = vks::initializers::rect2D(offScreenFrameBuf.width, offScreenFrameBuf.height, 0, 0);
+		vkCmdSetScissor(offScreenCmdBuffer, 0, 1, &scissor);
+
+		vkCmdBindPipeline(offScreenCmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.offscreen);
+
+		// Background
+		vkCmdBindDescriptorSets(offScreenCmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets.floor, 0, nullptr);
+		models.floor.draw(offScreenCmdBuffer);
+
+		// Instanced object
+		vkCmdBindDescriptorSets(offScreenCmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSets.model, 0, nullptr);
+		models.model.bindBuffers(offScreenCmdBuffer);
+		vkCmdDrawIndexed(offScreenCmdBuffer, models.model.indices.count, 3, 0, 0, 0);
+
+		vkCmdEndRenderPass(offScreenCmdBuffer);
+
+		VK_CHECK_RESULT(vkEndCommandBuffer(offScreenCmdBuffer));
+	}
+
+	void loadAssets()
+	{
+		const uint32_t glTFLoadingFlags = vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::PreMultiplyVertexColors | vkglTF::FileLoadingFlags::FlipY;
+		models.model.loadFromFile(getAssetPath() + "models/armor/armor.gltf", vulkanDevice, queue, glTFLoadingFlags);
+		models.floor.loadFromFile(getAssetPath() + "models/deferred_floor.gltf", vulkanDevice, queue, glTFLoadingFlags);
+		textures.model.colorMap.loadFromFile(getAssetPath() + "models/armor/colormap_rgba.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
+		textures.model.normalMap.loadFromFile(getAssetPath() + "models/armor/normalmap_rgba.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
+		textures.floor.colorMap.loadFromFile(getAssetPath() + "textures/stonefloor01_color_rgba.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
+		textures.floor.normalMap.loadFromFile(getAssetPath() + "textures/stonefloor01_normal_rgba.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
 	}
 
 	void buildCommandBuffers()
@@ -457,7 +446,7 @@ public:
 		VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
 
 		VkClearValue clearValues[2];
-		clearValues[0].color = defaultClearColor;
+		clearValues[0].color = { { 0.0f, 0.0f, 0.2f, 0.0f } };
 		clearValues[1].depthStencil = { 1.0f, 0 };
 
 		VkRenderPassBeginInfo renderPassBeginInfo = vks::initializers::renderPassBeginInfo();
@@ -471,7 +460,6 @@ public:
 
 		for (int32_t i = 0; i < drawCmdBuffers.size(); ++i)
 		{
-			// Set target frame buffer
 			renderPassBeginInfo.framebuffer = frameBuffers[i];
 
 			VK_CHECK_RESULT(vkBeginCommandBuffer(drawCmdBuffers[i], &cmdBufInfo));
@@ -484,14 +472,12 @@ public:
 			VkRect2D scissor = vks::initializers::rect2D(width, height, 0, 0);
 			vkCmdSetScissor(drawCmdBuffers[i], 0, 1, &scissor);
 
-			vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSet, 0, NULL);
-			vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.solid);
+			vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
 
-			VkDeviceSize offsets[1] = { 0 };
-			vkCmdBindVertexBuffers(drawCmdBuffers[i], VERTEX_BUFFER_BIND_ID, 1, &vertexBuffer.buffer, offsets);
-			vkCmdBindIndexBuffer(drawCmdBuffers[i], indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
-
-			vkCmdDrawIndexed(drawCmdBuffers[i], indexCount, 1, 0, 0, 0);
+			vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.composition);
+			// Final composition as full screen quad
+			// Note: Also used for debug display if debugDisplayTarget > 0
+			vkCmdDraw(drawCmdBuffers[i], 3, 1, 0, 0);
 
 			drawUI(drawCmdBuffers[i]);
 
@@ -501,290 +487,310 @@ public:
 		}
 	}
 
-	void draw()
-	{
-		VulkanExampleBase::prepareFrame();
-
-		// Command buffer to be submitted to the queue
-		submitInfo.commandBufferCount = 1;
-		submitInfo.pCommandBuffers = &drawCmdBuffers[currentBuffer];
-
-		// Submit to queue
-		VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
-
-		VulkanExampleBase::submitFrame();
-	}
-
-	void generateQuad()
-	{
-		// Setup vertices for a single uv-mapped quad made from two triangles
-		std::vector<Vertex> vertices =
-		{
-			{ {  1.0f,  1.0f, 0.0f }, { 1.0f, 1.0f },{ 0.0f, 0.0f, 1.0f } },
-			{ { -1.0f,  1.0f, 0.0f }, { 0.0f, 1.0f },{ 0.0f, 0.0f, 1.0f } },
-			{ { -1.0f, -1.0f, 0.0f }, { 0.0f, 0.0f },{ 0.0f, 0.0f, 1.0f } },
-			{ {  1.0f, -1.0f, 0.0f }, { 1.0f, 0.0f },{ 0.0f, 0.0f, 1.0f } }
-		};
-
-		// Setup indices
-		std::vector<uint32_t> indices = { 0,1,2, 2,3,0 };
-		indexCount = static_cast<uint32_t>(indices.size());
-
-		// Create buffers
-		// For the sake of simplicity we won't stage the vertex data to the gpu memory
-		// Vertex buffer
-		VK_CHECK_RESULT(vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-			&vertexBuffer,
-			vertices.size() * sizeof(Vertex),
-			vertices.data()));
-		// Index buffer
-		VK_CHECK_RESULT(vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-			&indexBuffer,
-			indices.size() * sizeof(uint32_t),
-			indices.data()));
-	}
-
-	void setupVertexDescriptions()
-	{
-		// Binding description
-		vertices.bindingDescriptions.resize(1);
-		vertices.bindingDescriptions[0] =
-			vks::initializers::vertexInputBindingDescription(
-				VERTEX_BUFFER_BIND_ID,
-				sizeof(Vertex),
-				VK_VERTEX_INPUT_RATE_VERTEX);
-
-		// Attribute descriptions
-		// Describes memory layout and shader positions
-		vertices.attributeDescriptions.resize(3);
-		// Location 0 : Position
-		vertices.attributeDescriptions[0] =
-			vks::initializers::vertexInputAttributeDescription(
-				VERTEX_BUFFER_BIND_ID,
-				0,
-				VK_FORMAT_R32G32B32_SFLOAT,
-				offsetof(Vertex, pos));
-		// Location 1 : Texture coordinates
-		vertices.attributeDescriptions[1] =
-			vks::initializers::vertexInputAttributeDescription(
-				VERTEX_BUFFER_BIND_ID,
-				1,
-				VK_FORMAT_R32G32_SFLOAT,
-				offsetof(Vertex, uv));
-		// Location 1 : Vertex normal
-		vertices.attributeDescriptions[2] =
-			vks::initializers::vertexInputAttributeDescription(
-				VERTEX_BUFFER_BIND_ID,
-				2,
-				VK_FORMAT_R32G32B32_SFLOAT,
-				offsetof(Vertex, normal));
-
-		vertices.inputState = vks::initializers::pipelineVertexInputStateCreateInfo();
-		vertices.inputState.vertexBindingDescriptionCount = static_cast<uint32_t>(vertices.bindingDescriptions.size());
-		vertices.inputState.pVertexBindingDescriptions = vertices.bindingDescriptions.data();
-		vertices.inputState.vertexAttributeDescriptionCount = static_cast<uint32_t>(vertices.attributeDescriptions.size());
-		vertices.inputState.pVertexAttributeDescriptions = vertices.attributeDescriptions.data();
-	}
-
 	void setupDescriptorPool()
 	{
-		// Example uses one ubo and one image sampler
-		std::vector<VkDescriptorPoolSize> poolSizes =
-		{
-			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1),
-			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1)
+		std::vector<VkDescriptorPoolSize> poolSizes = {
+			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 8),
+			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 9)
 		};
 
-		VkDescriptorPoolCreateInfo descriptorPoolInfo =
-			vks::initializers::descriptorPoolCreateInfo(
-				static_cast<uint32_t>(poolSizes.size()),
-				poolSizes.data(),
-				2);
-
+		VkDescriptorPoolCreateInfo descriptorPoolInfo = vks::initializers::descriptorPoolCreateInfo(poolSizes, 3);
 		VK_CHECK_RESULT(vkCreateDescriptorPool(device, &descriptorPoolInfo, nullptr, &descriptorPool));
 	}
 
 	void setupDescriptorSetLayout()
 	{
-		std::vector<VkDescriptorSetLayoutBinding> setLayoutBindings =
-		{
+		// Deferred shading layout
+		std::vector<VkDescriptorSetLayoutBinding> setLayoutBindings = {
 			// Binding 0 : Vertex shader uniform buffer
-			vks::initializers::descriptorSetLayoutBinding(
-				VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-				VK_SHADER_STAGE_VERTEX_BIT,
-				0),
-			// Binding 1 : Fragment shader image sampler
-			vks::initializers::descriptorSetLayoutBinding(
-				VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-				VK_SHADER_STAGE_FRAGMENT_BIT,
-				1)
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 0),
+			// Binding 1 : Position texture target / Scene colormap
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1),
+			// Binding 2 : Normals texture target
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 2),
+			// Binding 3 : Albedo texture target
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 3),
+			// Binding 4 : Fragment shader uniform buffer
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT, 4),
 		};
 
-		VkDescriptorSetLayoutCreateInfo descriptorLayout =
-			vks::initializers::descriptorSetLayoutCreateInfo(
-				setLayoutBindings.data(),
-				static_cast<uint32_t>(setLayoutBindings.size()));
-
+		VkDescriptorSetLayoutCreateInfo descriptorLayout = vks::initializers::descriptorSetLayoutCreateInfo(setLayoutBindings);
 		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorLayout, nullptr, &descriptorSetLayout));
 
-		VkPipelineLayoutCreateInfo pPipelineLayoutCreateInfo =
-			vks::initializers::pipelineLayoutCreateInfo(
-				&descriptorSetLayout,
-				1);
-
+		// Shared pipeline layout used by all pipelines
+		VkPipelineLayoutCreateInfo pPipelineLayoutCreateInfo = vks::initializers::pipelineLayoutCreateInfo(&descriptorSetLayout, 1);
 		VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pPipelineLayoutCreateInfo, nullptr, &pipelineLayout));
 	}
 
 	void setupDescriptorSet()
 	{
-		VkDescriptorSetAllocateInfo allocInfo =
-			vks::initializers::descriptorSetAllocateInfo(
-				descriptorPool,
-				&descriptorSetLayout,
-				1);
+		std::vector<VkWriteDescriptorSet> writeDescriptorSets;
+		VkDescriptorSetAllocateInfo allocInfo = vks::initializers::descriptorSetAllocateInfo(descriptorPool, &descriptorSetLayout, 1);
 
+		// Image descriptors for the offscreen color attachments
+		VkDescriptorImageInfo texDescriptorPosition =
+			vks::initializers::descriptorImageInfo(
+				colorSampler,
+				offScreenFrameBuf.position.view,
+				VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+		VkDescriptorImageInfo texDescriptorNormal =
+			vks::initializers::descriptorImageInfo(
+				colorSampler,
+				offScreenFrameBuf.normal.view,
+				VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+		VkDescriptorImageInfo texDescriptorAlbedo =
+			vks::initializers::descriptorImageInfo(
+				colorSampler,
+				offScreenFrameBuf.albedo.view,
+				VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+		// Deferred composition
 		VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSet));
-
-		// Setup a descriptor image info for the current texture to be used as a combined image sampler
-		VkDescriptorImageInfo textureDescriptor;
-		textureDescriptor.imageView = texture.view;				// The image's view (images are never directly accessed by the shader, but rather through views defining subresources)
-		textureDescriptor.sampler = texture.sampler;			// The sampler (Telling the pipeline how to sample the texture, including repeat, border, etc.)
-		textureDescriptor.imageLayout = texture.imageLayout;	// The current layout of the image (Note: Should always fit the actual use, e.g. shader read)
-
-		std::vector<VkWriteDescriptorSet> writeDescriptorSets =
-		{
-			// Binding 0 : Vertex shader uniform buffer
-			vks::initializers::writeDescriptorSet(
-				descriptorSet,
-				VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-				0,
-				&uniformBufferVS.descriptor),
-			// Binding 1 : Fragment shader texture sampler
-			//	Fragment shader: layout (binding = 1) uniform sampler2D samplerColor;
-			vks::initializers::writeDescriptorSet(
-				descriptorSet,
-				VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,		// The descriptor set will use a combined image sampler (sampler and image could be split)
-				1,												// Shader binding point 1
-				&textureDescriptor)								// Pointer to the descriptor image for our texture
+		writeDescriptorSets = {
+			// Binding 1 : Position texture target
+			vks::initializers::writeDescriptorSet(descriptorSet, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, &texDescriptorPosition),
+			// Binding 2 : Normals texture target
+			vks::initializers::writeDescriptorSet(descriptorSet, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2, &texDescriptorNormal),
+			// Binding 3 : Albedo texture target
+			vks::initializers::writeDescriptorSet(descriptorSet, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3, &texDescriptorAlbedo),
+			// Binding 4 : Fragment shader uniform buffer
+			vks::initializers::writeDescriptorSet(descriptorSet, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 4, &uniformBuffers.composition.descriptor),
 		};
+		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
 
-		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, NULL);
+		// Offscreen (scene)
+
+		// Model
+		VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSets.model));
+		writeDescriptorSets = {
+			// Binding 0: Vertex shader uniform buffer
+			vks::initializers::writeDescriptorSet(descriptorSets.model, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &uniformBuffers.offscreen.descriptor),
+			// Binding 1: Color map
+			vks::initializers::writeDescriptorSet(descriptorSets.model, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, &textures.model.colorMap.descriptor),
+			// Binding 2: Normal map
+			vks::initializers::writeDescriptorSet(descriptorSets.model, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2, &textures.model.normalMap.descriptor)
+		};
+		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
+
+		// Background
+		VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSets.floor));
+		writeDescriptorSets = {
+			// Binding 0: Vertex shader uniform buffer
+			vks::initializers::writeDescriptorSet(descriptorSets.floor, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &uniformBuffers.offscreen.descriptor),
+			// Binding 1: Color map
+			vks::initializers::writeDescriptorSet(descriptorSets.floor, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, &textures.floor.colorMap.descriptor),
+			// Binding 2: Normal map
+			vks::initializers::writeDescriptorSet(descriptorSets.floor, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2, &textures.floor.normalMap.descriptor)
+		};
+		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
 	}
 
 	void preparePipelines()
 	{
-		VkPipelineInputAssemblyStateCreateInfo inputAssemblyState =
-			vks::initializers::pipelineInputAssemblyStateCreateInfo(
-				VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
-				0,
-				VK_FALSE);
+		VkPipelineInputAssemblyStateCreateInfo inputAssemblyState = vks::initializers::pipelineInputAssemblyStateCreateInfo(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, 0, VK_FALSE);
+		VkPipelineRasterizationStateCreateInfo rasterizationState = vks::initializers::pipelineRasterizationStateCreateInfo(VK_POLYGON_MODE_FILL, VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE, 0);
+		VkPipelineColorBlendAttachmentState blendAttachmentState = vks::initializers::pipelineColorBlendAttachmentState(0xf, VK_FALSE);
+		VkPipelineColorBlendStateCreateInfo colorBlendState = vks::initializers::pipelineColorBlendStateCreateInfo(1, &blendAttachmentState);
+		VkPipelineDepthStencilStateCreateInfo depthStencilState = vks::initializers::pipelineDepthStencilStateCreateInfo(VK_TRUE, VK_TRUE, VK_COMPARE_OP_LESS_OR_EQUAL);
+		VkPipelineViewportStateCreateInfo viewportState = vks::initializers::pipelineViewportStateCreateInfo(1, 1, 0);
+		VkPipelineMultisampleStateCreateInfo multisampleState = vks::initializers::pipelineMultisampleStateCreateInfo(VK_SAMPLE_COUNT_1_BIT, 0);
+		std::vector<VkDynamicState> dynamicStateEnables = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+		VkPipelineDynamicStateCreateInfo dynamicState = vks::initializers::pipelineDynamicStateCreateInfo(dynamicStateEnables);
+		std::array<VkPipelineShaderStageCreateInfo, 2> shaderStages;
 
-		VkPipelineRasterizationStateCreateInfo rasterizationState =
-			vks::initializers::pipelineRasterizationStateCreateInfo(
-				VK_POLYGON_MODE_FILL,
-				VK_CULL_MODE_NONE,
-				VK_FRONT_FACE_COUNTER_CLOCKWISE,
-				0);
+		VkGraphicsPipelineCreateInfo pipelineCI = vks::initializers::pipelineCreateInfo(pipelineLayout, renderPass);
+		pipelineCI.pInputAssemblyState = &inputAssemblyState;
+		pipelineCI.pRasterizationState = &rasterizationState;
+		pipelineCI.pColorBlendState = &colorBlendState;
+		pipelineCI.pMultisampleState = &multisampleState;
+		pipelineCI.pViewportState = &viewportState;
+		pipelineCI.pDepthStencilState = &depthStencilState;
+		pipelineCI.pDynamicState = &dynamicState;
+		pipelineCI.stageCount = static_cast<uint32_t>(shaderStages.size());
+		pipelineCI.pStages = shaderStages.data();
 
-		VkPipelineColorBlendAttachmentState blendAttachmentState =
-			vks::initializers::pipelineColorBlendAttachmentState(
-				0xf,
-				VK_FALSE);
+		// Final fullscreen composition pass pipeline
+		rasterizationState.cullMode = VK_CULL_MODE_FRONT_BIT;
+		shaderStages[0] = loadShader(getShadersPath() + "meshparticles/deferred.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
+		shaderStages[1] = loadShader(getShadersPath() + "meshparticles/deferred.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
+		// Empty vertex input state, vertices are generated by the vertex shader
+		VkPipelineVertexInputStateCreateInfo emptyInputState = vks::initializers::pipelineVertexInputStateCreateInfo();
+		pipelineCI.pVertexInputState = &emptyInputState;
+		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCI, nullptr, &pipelines.composition));
 
-		VkPipelineColorBlendStateCreateInfo colorBlendState =
-			vks::initializers::pipelineColorBlendStateCreateInfo(
-				1,
-				&blendAttachmentState);
+		// Vertex input state from glTF model for pipeline rendering models
+		pipelineCI.pVertexInputState = vkglTF::Vertex::getPipelineVertexInputState({ vkglTF::VertexComponent::Position, vkglTF::VertexComponent::UV, vkglTF::VertexComponent::Color, vkglTF::VertexComponent::Normal, vkglTF::VertexComponent::Tangent });
+		rasterizationState.cullMode = VK_CULL_MODE_BACK_BIT;
 
-		VkPipelineDepthStencilStateCreateInfo depthStencilState =
-			vks::initializers::pipelineDepthStencilStateCreateInfo(
-				VK_TRUE,
-				VK_TRUE,
-				VK_COMPARE_OP_LESS_OR_EQUAL);
+		// Offscreen pipeline
+		shaderStages[0] = loadShader(getShadersPath() + "meshparticles/mrt.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
+		shaderStages[1] = loadShader(getShadersPath() + "meshparticles/mrt.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
 
-		VkPipelineViewportStateCreateInfo viewportState =
-			vks::initializers::pipelineViewportStateCreateInfo(1, 1, 0);
+		// Separate render pass
+		pipelineCI.renderPass = offScreenFrameBuf.renderPass;
 
-		VkPipelineMultisampleStateCreateInfo multisampleState =
-			vks::initializers::pipelineMultisampleStateCreateInfo(
-				VK_SAMPLE_COUNT_1_BIT,
-				0);
-
-		std::vector<VkDynamicState> dynamicStateEnables = {
-			VK_DYNAMIC_STATE_VIEWPORT,
-			VK_DYNAMIC_STATE_SCISSOR
+		// Blend attachment states required for all color attachments
+		// This is important, as color write mask will otherwise be 0x0 and you
+		// won't see anything rendered to the attachment
+		std::array<VkPipelineColorBlendAttachmentState, 3> blendAttachmentStates = {
+			vks::initializers::pipelineColorBlendAttachmentState(0xf, VK_FALSE),
+			vks::initializers::pipelineColorBlendAttachmentState(0xf, VK_FALSE),
+			vks::initializers::pipelineColorBlendAttachmentState(0xf, VK_FALSE)
 		};
-		VkPipelineDynamicStateCreateInfo dynamicState =
-			vks::initializers::pipelineDynamicStateCreateInfo(
-				dynamicStateEnables.data(),
-				static_cast<uint32_t>(dynamicStateEnables.size()),
-				0);
 
-		// Load shaders
-		std::array<VkPipelineShaderStageCreateInfo,2> shaderStages;
+		colorBlendState.attachmentCount = static_cast<uint32_t>(blendAttachmentStates.size());
+		colorBlendState.pAttachments = blendAttachmentStates.data();
 
-		shaderStages[0] = loadShader(getShadersPath() + "meshparticles/meshparticles.vert.spv", VK_SHADER_STAGE_VERTEX_BIT);
-		shaderStages[1] = loadShader(getShadersPath() + "meshparticles/meshparticles.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
-
-		VkGraphicsPipelineCreateInfo pipelineCreateInfo =
-			vks::initializers::pipelineCreateInfo(
-				pipelineLayout,
-				renderPass,
-				0);
-
-		pipelineCreateInfo.pVertexInputState = &vertices.inputState;
-		pipelineCreateInfo.pInputAssemblyState = &inputAssemblyState;
-		pipelineCreateInfo.pRasterizationState = &rasterizationState;
-		pipelineCreateInfo.pColorBlendState = &colorBlendState;
-		pipelineCreateInfo.pMultisampleState = &multisampleState;
-		pipelineCreateInfo.pViewportState = &viewportState;
-		pipelineCreateInfo.pDepthStencilState = &depthStencilState;
-		pipelineCreateInfo.pDynamicState = &dynamicState;
-		pipelineCreateInfo.stageCount = static_cast<uint32_t>(shaderStages.size());
-		pipelineCreateInfo.pStages = shaderStages.data();
-
-		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCreateInfo, nullptr, &pipelines.solid));
+		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCI, nullptr, &pipelines.offscreen));
 	}
 
 	// Prepare and initialize uniform buffer containing shader uniforms
 	void prepareUniformBuffers()
 	{
-		// Vertex shader uniform buffer block
+		// Offscreen vertex shader
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(
 			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
 			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-			&uniformBufferVS,
-			sizeof(uboVS),
-			&uboVS));
-		VK_CHECK_RESULT(uniformBufferVS.map());
+			&uniformBuffers.offscreen,
+			sizeof(uboOffscreenVS)));
 
-		updateUniformBuffers();
+		// Deferred fragment shader
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(
+			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			&uniformBuffers.composition,
+			sizeof(uboComposition)));
+
+		// Map persistent
+		VK_CHECK_RESULT(uniformBuffers.offscreen.map());
+		VK_CHECK_RESULT(uniformBuffers.composition.map());
+
+		// Setup instanced model positions
+		uboOffscreenVS.instancePos[0] = glm::vec4(0.0f);
+		uboOffscreenVS.instancePos[1] = glm::vec4(-4.0f, 0.0, -4.0f, 0.0f);
+		uboOffscreenVS.instancePos[2] = glm::vec4(4.0f, 0.0, -4.0f, 0.0f);
+
+		// Update
+		updateUniformBufferOffscreen();
+		updateUniformBufferComposition();
 	}
 
-	void updateUniformBuffers()
+	// Update matrices used for the offscreen rendering of the scene
+	void updateUniformBufferOffscreen()
 	{
-		uboVS.projection = camera.matrices.perspective;
-		uboVS.modelView = camera.matrices.view;
-		uboVS.viewPos = camera.viewPos;
-		memcpy(uniformBufferVS.mapped, &uboVS, sizeof(uboVS));
+		uboOffscreenVS.projection = camera.matrices.perspective;
+		uboOffscreenVS.view = camera.matrices.view;
+		uboOffscreenVS.model = glm::mat4(1.0f);
+		uboOffscreenVS.model = glm::rotate(uboOffscreenVS.model, glm::radians(90.0f), glm::vec3(-1.0f, 0.0f, 0.0f));
+		memcpy(uniformBuffers.offscreen.mapped, &uboOffscreenVS, sizeof(uboOffscreenVS));
+	}
+
+	// Update lights and parameters passed to the composition shaders
+	void updateUniformBufferComposition()
+	{
+		// White
+		uboComposition.lights[0].position = glm::vec4(0.0f, 0.0f, 1.0f, 0.0f);
+		uboComposition.lights[0].color = glm::vec3(1.5f);
+		uboComposition.lights[0].radius = 15.0f * 0.25f;
+		// Red
+		uboComposition.lights[1].position = glm::vec4(-2.0f, 0.0f, 0.0f, 0.0f);
+		uboComposition.lights[1].color = glm::vec3(1.0f, 0.0f, 0.0f);
+		uboComposition.lights[1].radius = 15.0f;
+		// Blue
+		uboComposition.lights[2].position = glm::vec4(2.0f, -1.0f, 0.0f, 0.0f);
+		uboComposition.lights[2].color = glm::vec3(0.0f, 0.0f, 2.5f);
+		uboComposition.lights[2].radius = 5.0f;
+		// Yellow
+		uboComposition.lights[3].position = glm::vec4(0.0f, -0.9f, 0.5f, 0.0f);
+		uboComposition.lights[3].color = glm::vec3(1.0f, 1.0f, 0.0f);
+		uboComposition.lights[3].radius = 2.0f;
+		// Green
+		uboComposition.lights[4].position = glm::vec4(0.0f, -0.5f, 0.0f, 0.0f);
+		uboComposition.lights[4].color = glm::vec3(0.0f, 1.0f, 0.2f);
+		uboComposition.lights[4].radius = 5.0f;
+		// Yellow
+		uboComposition.lights[5].position = glm::vec4(0.0f, -1.0f, 0.0f, 0.0f);
+		uboComposition.lights[5].color = glm::vec3(1.0f, 0.7f, 0.3f);
+		uboComposition.lights[5].radius = 25.0f;
+
+		uboComposition.lights[0].position.x = sin(glm::radians(360.0f * timer)) * 5.0f;
+		uboComposition.lights[0].position.z = cos(glm::radians(360.0f * timer)) * 5.0f;
+
+		uboComposition.lights[1].position.x = -4.0f + sin(glm::radians(360.0f * timer) + 45.0f) * 2.0f;
+		uboComposition.lights[1].position.z = 0.0f + cos(glm::radians(360.0f * timer) + 45.0f) * 2.0f;
+
+		uboComposition.lights[2].position.x = 4.0f + sin(glm::radians(360.0f * timer)) * 2.0f;
+		uboComposition.lights[2].position.z = 0.0f + cos(glm::radians(360.0f * timer)) * 2.0f;
+
+		uboComposition.lights[4].position.x = 0.0f + sin(glm::radians(360.0f * timer + 90.0f)) * 5.0f;
+		uboComposition.lights[4].position.z = 0.0f - cos(glm::radians(360.0f * timer + 45.0f)) * 5.0f;
+
+		uboComposition.lights[5].position.x = 0.0f + sin(glm::radians(-360.0f * timer + 135.0f)) * 10.0f;
+		uboComposition.lights[5].position.z = 0.0f - cos(glm::radians(-360.0f * timer - 45.0f)) * 10.0f;
+
+		// Current view position
+		uboComposition.viewPos = glm::vec4(camera.position, 0.0f) * glm::vec4(-1.0f, 1.0f, -1.0f, 1.0f);
+
+		uboComposition.debugDisplayTarget = debugDisplayTarget;
+
+		memcpy(uniformBuffers.composition.mapped, &uboComposition, sizeof(uboComposition));
+	}
+
+	void draw()
+	{
+		VulkanExampleBase::prepareFrame();
+
+		// The scene render command buffer has to wait for the offscreen
+		// rendering to be finished before we can use the framebuffer
+		// color image for sampling during final rendering
+		// To ensure this we use a dedicated offscreen synchronization
+		// semaphore that will be signaled when offscreen rendering
+		// has been finished
+		// This is necessary as an implementation may start both
+		// command buffers at the same time, there is no guarantee
+		// that command buffers will be executed in the order they
+		// have been submitted by the application
+
+		// Offscreen rendering
+
+		// Wait for swap chain presentation to finish
+		submitInfo.pWaitSemaphores = &semaphores.presentComplete;
+		// Signal ready with offscreen semaphore
+		submitInfo.pSignalSemaphores = &offscreenSemaphore;
+
+		// Submit work
+		submitInfo.commandBufferCount = 1;
+		submitInfo.pCommandBuffers = &offScreenCmdBuffer;
+		VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
+
+		// Scene rendering
+
+		// Wait for offscreen semaphore
+		submitInfo.pWaitSemaphores = &offscreenSemaphore;
+		// Signal ready with render complete semaphore
+		submitInfo.pSignalSemaphores = &semaphores.renderComplete;
+
+		// Submit work
+		submitInfo.pCommandBuffers = &drawCmdBuffers[currentBuffer];
+		VK_CHECK_RESULT(vkQueueSubmit(queue, 1, &submitInfo, VK_NULL_HANDLE));
+
+		VulkanExampleBase::submitFrame();
 	}
 
 	void prepare()
 	{
 		VulkanExampleBase::prepare();
-		loadTexture();
-		generateQuad();
-		setupVertexDescriptions();
+		loadAssets();
+		prepareOffscreenFramebuffer();
 		prepareUniformBuffers();
 		setupDescriptorSetLayout();
 		preparePipelines();
 		setupDescriptorPool();
 		setupDescriptorSet();
 		buildCommandBuffers();
+		buildDeferredCommandBuffer();
 		prepared = true;
 	}
 
@@ -793,18 +799,27 @@ public:
 		if (!prepared)
 			return;
 		draw();
+		if (!paused)
+		{
+			updateUniformBufferComposition();
+		}
+		if (camera.updated)
+		{
+			updateUniformBufferOffscreen();
+		}
 	}
 
 	virtual void viewChanged()
 	{
-		updateUniformBuffers();
+		updateUniformBufferOffscreen();
 	}
 
-	virtual void OnUpdateUIOverlay(vks::UIOverlay *overlay)
+	virtual void OnUpdateUIOverlay(vks::UIOverlay* overlay)
 	{
 		if (overlay->header("Settings")) {
-			if (overlay->sliderFloat("LOD bias", &uboVS.lodBias, 0.0f, (float)texture.mipLevels)) {
-				updateUniformBuffers();
+			if (overlay->comboBox("Display", &debugDisplayTarget, { "Final composition", "Position", "Normals", "Albedo", "Specular" }))
+			{
+				updateUniformBufferComposition();
 			}
 		}
 	}
