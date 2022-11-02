@@ -7,6 +7,7 @@ layout (location = 3) in vec3 inPos;
 
 layout (binding = 0) uniform UBO 
 {
+	vec4 instancePos[2];
 	float modelAlpha;
 } modelData;
 

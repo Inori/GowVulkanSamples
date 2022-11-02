@@ -22,6 +22,7 @@ public:
 
 	struct UBOModelData {
 		float modelAlpha = 1.0f;
+		uint32_t instanceIndex;
 	} uboModelData;
 
 	struct UBOViewlData {
@@ -51,6 +52,8 @@ public:
 		vks::Buffer modelData;
 		vks::Buffer viewData;
 	} uniformBuffers;
+
+	vks::Buffer instancingBuffer;
 
 	struct FrameBufferAttachment {
 		VkImage image;
@@ -234,7 +237,7 @@ public:
 
 				vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.scene);
 
-				sphere.draw(drawCmdBuffers[i], 0, pipelineLayouts.scene);
+				sphere.draw(drawCmdBuffers[i], 2, 0, pipelineLayouts.scene);
 
 				drawUI(drawCmdBuffers[i]);
 
@@ -355,6 +358,10 @@ public:
 			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
 			&uniformBuffers.viewData,
 			sizeof(uboViewData));
+
+		// Setup instanced model positions
+		uboModelData.instancePos[0] = glm::vec4(0.0f);
+		uboModelData.instancePos[1] = glm::vec4(-4.0f, 0.0, -4.0f, 0.0f);
 
 		// Update
 		updateUniformBufferModel();
