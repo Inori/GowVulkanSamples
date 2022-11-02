@@ -18,5 +18,16 @@ layout (location = 0) out vec4 outColor;
 
 void main() 
 {
-	outColor = texture(samplerMaterial, inUV) * vec4(inColor, 1.0);
+	float gray = texture(samplerMaterial, inUV).r;
+	//float alphaNoise = texture(samplerNoise, inUV).r;
+	float alphaNoise = 1 - gray;
+
+	if (modelData.modelAlpha > alphaNoise)
+	{
+		outColor = vec4(gray, gray, gray, 1.0) * vec4(inColor, 1.0);
+	}
+	else
+	{
+		outColor = vec4(0.0, 0.0, 0.0, 0.0);
+	}
 }
