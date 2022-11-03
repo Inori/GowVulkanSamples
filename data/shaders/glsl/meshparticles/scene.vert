@@ -5,22 +5,7 @@ layout (location = 1) in vec2 inUV;
 layout (location = 2) in vec3 inColor;
 layout (location = 3) in vec3 inNormal;
 
-layout (binding = 0) uniform UBOModel 
-{
-	float modelAlpha;	
-} modelData;
-
-layout (binding = 1) uniform UBOView
-{
-	mat4 projection;
-	mat4 model;
-	mat4 view;
-} viewData;
-
-layout (binding = 2) buffer SRVInstance
-{
-	vec4 instancePos[2];
-} instanceData;
+#include "common.h"
 
 layout (location = 0) out vec3 outNormal;
 layout (location = 1) out vec2 outUV;
