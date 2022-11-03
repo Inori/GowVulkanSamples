@@ -1,11 +1,11 @@
 #version 450
 
+#include "common.h"
+
 layout (location = 0) in vec3 inNormal;
 layout (location = 1) in vec2 inUV;
 layout (location = 2) in vec3 inColor;
 layout (location = 3) in vec3 inPos;
-
-#include "common.h"
 
 layout (binding = 3) uniform sampler2D samplerMaterial;
 layout (binding = 4) uniform sampler2D samplerNoise;
