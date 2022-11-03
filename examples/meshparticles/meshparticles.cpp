@@ -368,7 +368,7 @@ public:
 
 		// Setup instanced model positions
 		srvInstanceData.instancePos[0] = glm::vec4(0.0f);
-		srvInstanceData.instancePos[1] = glm::vec4(-4.0f, 0.0, -4.0f, 0.0f);
+		srvInstanceData.instancePos[1] = glm::vec4(-3.0f, 0.0, -4.0f, 0.0f);
 
 		vks::Buffer stagingBuffer;
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(
