@@ -7,12 +7,11 @@ layout (location = 3) in vec3 inPos;
 
 layout (binding = 0) uniform UBO 
 {
-	vec4 instancePos[2];
 	float modelAlpha;
 } modelData;
 
-layout (binding = 2) uniform sampler2D samplerMaterial;
-layout (binding = 3) uniform sampler2D samplerNoise;
+layout (binding = 3) uniform sampler2D samplerMaterial;
+layout (binding = 4) uniform sampler2D samplerNoise;
 
 layout (location = 0) out vec4 outColor;
 

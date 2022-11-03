@@ -7,6 +7,7 @@ layout (location = 3) in vec3 inNormal;
 
 layout (binding = 0) uniform UBOModel 
 {
+	uint instanceIndex;
 	float modelAlpha;	
 } modelData;
 
@@ -17,11 +18,6 @@ layout (binding = 1) uniform UBOView
 	mat4 view;
 } viewData;
 
-layout (binding = 2) buffer SRVInstance
-{
-	vec4 instancePos[2];
-} instanceData;
-
 layout (location = 0) out vec3 outNormal;
 layout (location = 1) out vec2 outUV;
 layout (location = 2) out vec3 outColor;
@@ -29,7 +25,7 @@ layout (location = 3) out vec3 outPos;
 
 void main() 
 {
-	vec4 instancePos = inPos + instanceData.instancePos[gl_InstanceIndex];
+	vec4 instancePos = inPos + modelData.instancePos[gl_InstanceIndex];
 	gl_Position = viewData.projection * viewData.view * viewData.model * instancePos;
 	
 	outUV = inUV;
