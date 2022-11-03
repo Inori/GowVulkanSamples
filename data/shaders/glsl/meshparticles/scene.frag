@@ -2,6 +2,8 @@
 
 #include "common.h"
 
+layout(early_fragment_tests) in;
+
 layout (location = 0) in vec3 inNormal;
 layout (location = 1) in vec2 inUV;
 layout (location = 2) in vec3 inColor;
