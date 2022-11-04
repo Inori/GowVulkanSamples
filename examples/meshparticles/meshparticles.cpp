@@ -20,6 +20,7 @@ public:
 	vks::Texture2D particlespawn;
 	vks::Texture2D noise;
 
+	constexpr static uint32_t particleCount = 128 * 1024;
 	constexpr static uint32_t instanceCount = 2;
 
 	struct UBOModelData {
@@ -36,33 +37,63 @@ public:
 		glm::vec4 instancePos[instanceCount];
 	} srvInstanceData;
 
-	struct {
-		VkPipeline depthOnly;
-		VkPipeline scene;
-	} pipelines;
+	// Append buffer unit
+	struct AppendJob {
+		glm::vec2 screenPos;
+	};
 
-	struct {
-		VkPipelineLayout scene;
-	} pipelineLayouts;
+	// SSBO particle declaration
+	struct Particle {
+		glm::vec4 pos;
+		glm::vec4 color;
+	};
 
-	struct {
-		const uint32_t count = 1;
-		VkDescriptorSet scene;
-	} descriptorSets;
-
-	struct {
-		VkDescriptorSetLayout scene;
-	} descriptorSetLayouts;
+	struct ParticleSystem {					// Compute shader uniform block object
+		float deltaT;						// Frame delta time
+	} particleSystem;
 
 	struct {
 		vks::Buffer modelData;
 		vks::Buffer viewData;
+		vks::Buffer particleSystem;
 	} uniformBuffers;
 
 	struct {
-		vks::Buffer instancingBuffer;
+		vks::Buffer instancing;
+		// VkDispatchIndirectCommand
+		vks::Buffer dispatch;
+		// AppendJob
+		vks::Buffer append;
+		// Particle
+		vks::Buffer particle;
 	} resourceBuffers;
-	
+
+	struct {
+		VkPipeline depthOnly;
+		VkPipeline scene;
+		VkPipeline compute;
+		VkPipeline particle;
+	} pipelines;
+
+	struct {
+		VkPipelineLayout scene;
+		VkPipelineLayout compute;
+		VkPipelineLayout paraticle;
+	} pipelineLayouts;
+
+	struct {
+		const uint32_t count = 3;
+		VkDescriptorSet scene;
+		VkDescriptorSet compute;
+		VkDescriptorSet particle;
+	} descriptorSets;
+
+	struct {
+		VkDescriptorSetLayout scene;
+		VkDescriptorSetLayout compute;
+		VkDescriptorSetLayout particle;
+	} descriptorSetLayouts;
+
 
 	struct FrameBufferAttachment {
 		VkImage image;
@@ -116,6 +147,11 @@ public:
 		particlespawn.destroy();
 		noise.destroy();
 
+		resourceBuffers.instancing.destroy();
+		resourceBuffers.dispatch.destroy();
+		resourceBuffers.append.destroy();
+		resourceBuffers.particle.destroy();
+
 		vkDestroySampler(device, colorSampler, nullptr);
 
 		vkDestroyPipeline(device, pipelines.scene, nullptr);
@@ -128,6 +164,7 @@ public:
 	void getEnabledFeatures()
 	{
 		enabledFeatures.samplerAnisotropy = deviceFeatures.samplerAnisotropy;
+		enabledFeatures.fragmentStoresAndAtomics = deviceFeatures.fragmentStoresAndAtomics;
 	}
 
 	// Create a frame buffer attachment
@@ -289,7 +326,7 @@ public:
 		// Note that we use previously generated depth buffer, so we need to keep its' content
 		attachments[1].format = depthFormat;
 		attachments[1].samples = VK_SAMPLE_COUNT_1_BIT;
-		attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;  
+		attachments[1].loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
 		attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 		attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
 		attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
@@ -366,7 +403,10 @@ public:
 		{
 			VK_CHECK_RESULT(vkBeginCommandBuffer(drawCmdBuffers[i], &cmdBufInfo));
 
-			
+
+			/*
+				First pass: Depth only
+			*/
 			{
 				std::vector<VkClearValue> clearValues(1);
 				clearValues[0].depthStencil = { 1.0f, 0 };
@@ -378,10 +418,6 @@ public:
 				renderPassBeginInfo.renderArea.extent.height = offscreenFrameBuffers.depthOnly.height;
 				renderPassBeginInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
 				renderPassBeginInfo.pClearValues = clearValues.data();
-
-				/*
-					First pass: Depth only
-				*/
 
 				vkCmdBeginRenderPass(drawCmdBuffers[i], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
@@ -401,7 +437,7 @@ public:
 
 
 			/*
-				Final render pass: Scene rendering
+				Second pass: Scene rendering
 			*/
 			{
 				std::vector<VkClearValue> clearValues(2);
@@ -435,7 +471,7 @@ public:
 				vkCmdEndRenderPass(drawCmdBuffers[i]);
 			}
 
-			
+
 
 			VK_CHECK_RESULT(vkEndCommandBuffer(drawCmdBuffers[i]));
 		}
@@ -446,7 +482,7 @@ public:
 		std::vector<VkDescriptorPoolSize> poolSizes = {
 			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 10),
 			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 10),
-			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 12)
+			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 10)
 		};
 		VkDescriptorPoolCreateInfo descriptorPoolInfo = vks::initializers::descriptorPoolCreateInfo(poolSizes, descriptorSets.count);
 		VK_CHECK_RESULT(vkCreateDescriptorPool(device, &descriptorPoolInfo, nullptr, &descriptorPool));
@@ -454,50 +490,147 @@ public:
 
 	void setupDescriptorSetLayout()
 	{
-		std::vector<VkDescriptorSetLayoutBinding> setLayoutBindings = {
-			// Binding 0 : Shader model data uniform buffer
-			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0),
-			// Binding 1 : Shader view data uniform buffer
-			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 1),
-			// Binding 2 : Instance data
-			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 2),
-			// Binding 3 : material texture
-			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 3),
-			// Binding 4 : noise texture
-			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 4),
-		};
+		// Depth and scene pass
+		{
+			std::vector<VkDescriptorSetLayoutBinding> setLayoutBindings = {
+				// Binding 0 : Shader model data uniform buffer
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0),
+				// Binding 1 : Shader view data uniform buffer
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 1),
+				// Binding 2 : Instance data
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 2),
+				// Binding 3 : material texture
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 3),
+				// Binding 4 : noise texture
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 4),
+				// Binding 5 : Append buffer
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT, 5),
+				// Binding 6 : Dispatch buffer
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT, 6)
+			};
 
-		VkDescriptorSetLayoutCreateInfo descriptorLayout = vks::initializers::descriptorSetLayoutCreateInfo(setLayoutBindings);
-		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorLayout, nullptr, &descriptorSetLayouts.scene));
+			VkDescriptorSetLayoutCreateInfo descriptorLayout = vks::initializers::descriptorSetLayoutCreateInfo(setLayoutBindings);
+			VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorLayout, nullptr, &descriptorSetLayouts.scene));
 
-		// Shared pipeline layout used by all pipelines
-		VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo = vks::initializers::pipelineLayoutCreateInfo(&descriptorSetLayouts.scene, 1);
-		VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo, nullptr, &pipelineLayouts.scene));
+			// Shared pipeline layout used by all pipelines
+			VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo = vks::initializers::pipelineLayoutCreateInfo(&descriptorSetLayouts.scene, 1);
+			VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo, nullptr, &pipelineLayouts.scene));
+		}
+
+		// Particle pass
+		{
+			std::vector<VkDescriptorSetLayoutBinding> setLayoutBindings = {
+				// Binding 0 : Shader model data uniform buffer
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0),
+				// Binding 1 : Shader view data uniform buffer
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 1),
+				// Binding 2 : Particle system uniform buffer
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 2)
+			};
+
+			VkDescriptorSetLayoutCreateInfo descriptorLayout =
+				vks::initializers::descriptorSetLayoutCreateInfo(
+					setLayoutBindings.data(),
+					static_cast<uint32_t>(setLayoutBindings.size()));
+
+			VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorLayout, nullptr, &descriptorSetLayouts.particle));
+
+			VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo =
+				vks::initializers::pipelineLayoutCreateInfo(&descriptorSetLayouts.particle, 1);
+			VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo, nullptr, &pipelineLayouts.paraticle));
+		}
+
+		// Compute pass
+		{
+			std::vector<VkDescriptorSetLayoutBinding> setLayoutBindings = {
+				// Binding 0 : Particle system uniform buffer
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 0),
+				// Binding 1 : Append buffer
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 1),
+				// Binding 2 : Particle buffer
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 2),
+			};
+
+			VkDescriptorSetLayoutCreateInfo descriptorLayout =
+				vks::initializers::descriptorSetLayoutCreateInfo(
+					setLayoutBindings.data(),
+					static_cast<uint32_t>(setLayoutBindings.size()));
+
+			VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorLayout, nullptr, &descriptorSetLayouts.compute));
+
+			VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo =
+				vks::initializers::pipelineLayoutCreateInfo(&descriptorSetLayouts.compute, 1);
+			VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo, nullptr, &pipelineLayouts.compute));
+		}
 	}
 
 	void setupDescriptorSet()
 	{
-		std::vector<VkWriteDescriptorSet> writeDescriptorSets;
-		VkDescriptorSetAllocateInfo allocInfo = vks::initializers::descriptorSetAllocateInfo(descriptorPool, &descriptorSetLayouts.scene, 1);
 
-		// Composition
-		VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSets.scene));
-		writeDescriptorSets = {
-			// Binding 0: Shader model data uniform buffer
-			vks::initializers::writeDescriptorSet(descriptorSets.scene, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &uniformBuffers.modelData.descriptor),
-			// Binding 1: Shader view data uniform buffer
-			vks::initializers::writeDescriptorSet(descriptorSets.scene, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, &uniformBuffers.viewData.descriptor),
-			// Binding 2: Shader view data uniform buffer
-			vks::initializers::writeDescriptorSet(descriptorSets.scene, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2, &resourceBuffers.instancingBuffer.descriptor),
-			// Binding 3 : Material texture
-			vks::initializers::writeDescriptorSet(descriptorSets.scene, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3, &particlespawn.descriptor),
-			// Binding 4 : Noise texture
-			vks::initializers::writeDescriptorSet(descriptorSets.scene, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4, &noise.descriptor)
-		};
-		vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
+		// Depth and scene pass
+		{
+			std::vector<VkWriteDescriptorSet> writeDescriptorSets;
+			VkDescriptorSetAllocateInfo allocInfo = vks::initializers::descriptorSetAllocateInfo(descriptorPool, &descriptorSetLayouts.scene, 1);
+			VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSets.scene));
+
+			writeDescriptorSets = 
+			{
+				// Binding 0: Shader model data uniform buffer
+				vks::initializers::writeDescriptorSet(descriptorSets.scene, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &uniformBuffers.modelData.descriptor),
+				// Binding 1: Shader view data uniform buffer
+				vks::initializers::writeDescriptorSet(descriptorSets.scene, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, &uniformBuffers.viewData.descriptor),
+				// Binding 2: Shader instance buffer
+				vks::initializers::writeDescriptorSet(descriptorSets.scene, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2, &resourceBuffers.instancing.descriptor),
+				// Binding 3 : Material texture
+				vks::initializers::writeDescriptorSet(descriptorSets.scene, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3, &particlespawn.descriptor),
+				// Binding 4 : Noise texture
+				vks::initializers::writeDescriptorSet(descriptorSets.scene, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4, &noise.descriptor),
+				// Binding 5 : Append buffer
+				vks::initializers::writeDescriptorSet(descriptorSets.scene, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 5, &resourceBuffers.append.descriptor),
+				// Binding 6 : Dispatch buffer
+				vks::initializers::writeDescriptorSet(descriptorSets.scene, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6, &resourceBuffers.append.descriptor)
+			};
+			vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
+		}
+
+		// Particle pass
+		{
+			std::vector<VkWriteDescriptorSet> writeDescriptorSets;
+			VkDescriptorSetAllocateInfo allocInfo = vks::initializers::descriptorSetAllocateInfo(descriptorPool, &descriptorSetLayouts.particle, 1);
+			VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSets.particle));
+
+			writeDescriptorSets =
+			{
+				// Binding 0: Shader model data uniform buffer
+				vks::initializers::writeDescriptorSet(descriptorSets.particle, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &uniformBuffers.modelData.descriptor),
+				// Binding 1: Shader view data uniform buffer
+				vks::initializers::writeDescriptorSet(descriptorSets.particle, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, &uniformBuffers.viewData.descriptor),
+				// Binding 2: Particle system
+				vks::initializers::writeDescriptorSet(descriptorSets.particle, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2, &uniformBuffers.particleSystem.descriptor)
+			};
+			vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
+		}
+
+
+		// Compute pass
+		{
+			VkDescriptorSetAllocateInfo allocInfo = vks::initializers::descriptorSetAllocateInfo(descriptorPool, &descriptorSetLayouts.compute,1);
+			VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSets.compute));
+
+			std::vector<VkWriteDescriptorSet> computeWriteDescriptorSets =
+			{
+				// Binding 0 : Particle system buffer
+				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &uniformBuffers.particleSystem.descriptor),
+				// Binding 1 : Append buffer
+				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, &resourceBuffers.append.descriptor),
+				// Binding 1 : Particle buffer
+				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2, &resourceBuffers.particle.descriptor)
+			};
+			vkUpdateDescriptorSets(device, static_cast<uint32_t>(computeWriteDescriptorSets.size()), computeWriteDescriptorSets.data(), 0, NULL);
+		}
 	}
 
-	void preparePipelines()
+	void prepareGraphicsPipelines()
 	{
 		VkPipelineInputAssemblyStateCreateInfo inputAssemblyState = vks::initializers::pipelineInputAssemblyStateCreateInfo(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST, 0, VK_FALSE);
 		VkPipelineRasterizationStateCreateInfo rasterizationState = vks::initializers::pipelineRasterizationStateCreateInfo(VK_POLYGON_MODE_FILL, VK_CULL_MODE_BACK_BIT, VK_FRONT_FACE_COUNTER_CLOCKWISE, 0);
@@ -562,17 +695,18 @@ public:
 			pipelineCreateInfo.pDepthStencilState = &depthStencilState;
 
 			// Fragment shader is not needed for a depth only pass.
-			pipelineCreateInfo.stageCount = 1;  
+			pipelineCreateInfo.stageCount = 1;
 			VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCreateInfo, nullptr, &pipelines.depthOnly));
 		}
 	}
 
 	void prepareResourceBuffers()
 	{
+		// Instance buffer
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(
 			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-			&resourceBuffers.instancingBuffer,
+			&resourceBuffers.instancing,
 			sizeof(srvInstanceData)));
 
 		// Setup instanced model positions
@@ -587,9 +721,32 @@ public:
 			sizeof(srvInstanceData),
 			&srvInstanceData));
 
-		vulkanDevice->copyBuffer(&stagingBuffer, &resourceBuffers.instancingBuffer, queue);
+		vulkanDevice->copyBuffer(&stagingBuffer, &resourceBuffers.instancing, queue);
 
 		stagingBuffer.destroy();
+
+		// Dispatch buffer
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			&resourceBuffers.dispatch,
+			sizeof(VkDispatchIndirectCommand)));
+
+		// Append buffer
+		VkDeviceSize appendBufferSize = width * height * sizeof(AppendJob);
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			&resourceBuffers.append,
+			appendBufferSize));
+
+		// Particle buffer
+		VkDeviceSize particleBufferSize = particleCount * sizeof(Particle);
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			&resourceBuffers.particle,
+			particleBufferSize));
 	}
 
 	// Prepare and initialize uniform buffer containing shader uniforms
@@ -609,9 +766,24 @@ public:
 			&uniformBuffers.viewData,
 			sizeof(uboViewData));
 
+		// Particle system
+		vulkanDevice->createBuffer(
+			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			&uniformBuffers.particleSystem,
+			sizeof(particleSystem));
+
 		// Update
 		updateUniformBufferModel();
 		updateUniformBufferView();
+	}
+
+	void prepareComputePipelines()
+	{
+		// Create pipeline
+		VkComputePipelineCreateInfo computePipelineCreateInfo = vks::initializers::computePipelineCreateInfo(pipelineLayouts.compute, 0);
+		computePipelineCreateInfo.stage = loadShader(getShadersPath() + "meshparticles/particle.comp.spv", VK_SHADER_STAGE_COMPUTE_BIT);
+		VK_CHECK_RESULT(vkCreateComputePipelines(device, pipelineCache, 1, &computePipelineCreateInfo, nullptr, &pipelines.compute));
 	}
 
 	void updateUniformBufferModel()
@@ -653,7 +825,8 @@ public:
 		setupDescriptorPool();
 		setupDescriptorSetLayout();
 		setupDescriptorSet();
-		preparePipelines();
+		prepareGraphicsPipelines();
+		prepareComputePipelines();
 		buildCommandBuffers();
 		prepared = true;
 	}

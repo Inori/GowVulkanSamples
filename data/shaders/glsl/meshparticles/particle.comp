@@ -1,0 +1,40 @@
+#version 450
+
+struct ParticleSystem
+{
+    float deltaT;
+};
+
+struct Particle
+{
+	vec4 pos;
+	vec4 color;
+};
+
+struct AppendJob 
+{
+	vec2 screenPos;
+};
+
+layout(std140, binding = 0) uniform UBO
+{
+   ParticleSystem particleSystem;
+};
+
+layout(std140, binding = 1) buffer AppendBuffer
+{
+   AppendJob appendJob[];
+};
+
+layout(std140, binding = 2) buffer ParticleBuffer
+{
+   Particle particles[];
+};
+
+layout (local_size_x = 256) in;
+
+void main() 
+{
+	particles[0].pos = vec4(0, 0, 0, 0);
+}
+

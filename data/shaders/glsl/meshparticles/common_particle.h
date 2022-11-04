@@ -1,3 +1,4 @@
+
 layout(binding = 0) uniform UBOModel
 {
 	float modelAlpha;
@@ -10,7 +11,13 @@ layout(binding = 1) uniform UBOView
 	mat4 view;
 } viewData;
 
-layout(binding = 2) buffer SRVInstance
+struct ParticleSystem
 {
-	vec4 instancePos[2];
+	float deltaT;
+};
+
+layout(std140, binding = 2) uniform ParticleSystemBuffer
+{
+	ParticleSystem particleSystem;
 } instanceData;
+
