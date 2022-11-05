@@ -24,6 +24,7 @@ public:
 
 	struct UBOModelData {
 		float alphaReference = 0.0f;
+		float deltaAlphaEstimation = 0.0;
 	} uboModelData;
 
 	struct UBOViewlData {
@@ -405,10 +406,13 @@ public:
 
 		VkDeviceSize offsets[1] = { 0 };
 
+		uint32_t queueFamilyIndex = vulkanDevice->queueFamilyIndices.graphics;
+
 		for (int32_t i = 0; i < drawCmdBuffers.size(); ++i)
 		{
-			VK_CHECK_RESULT(vkBeginCommandBuffer(drawCmdBuffers[i], &cmdBufInfo));
+			VkCommandBuffer& commandBuffer = drawCmdBuffers[i];
 
+			VK_CHECK_RESULT(vkBeginCommandBuffer(commandBuffer, &cmdBufInfo));
 
 			/*
 				First pass: Depth only
@@ -425,20 +429,20 @@ public:
 				renderPassBeginInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
 				renderPassBeginInfo.pClearValues = clearValues.data();
 
-				vkCmdBeginRenderPass(drawCmdBuffers[i], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+				vkCmdBeginRenderPass(commandBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
 				VkViewport viewport = vks::initializers::viewport((float)offscreenFrameBuffers.depthOnly.width, (float)offscreenFrameBuffers.depthOnly.height, 0.0f, 1.0f);
-				vkCmdSetViewport(drawCmdBuffers[i], 0, 1, &viewport);
+				vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
 
 				VkRect2D scissor = vks::initializers::rect2D(offscreenFrameBuffers.depthOnly.width, offscreenFrameBuffers.depthOnly.height, 0, 0);
-				vkCmdSetScissor(drawCmdBuffers[i], 0, 1, &scissor);
+				vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-				vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.depthOnly);
+				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.depthOnly);
 
-				vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.scene, 0, 1, &descriptorSets.scene, 0, NULL);
-				sphere.draw(drawCmdBuffers[i], instanceCount, 0, pipelineLayouts.scene);
+				vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.scene, 0, 1, &descriptorSets.scene, 0, NULL);
+				sphere.draw(commandBuffer, instanceCount, 0, pipelineLayouts.scene);
 
-				vkCmdEndRenderPass(drawCmdBuffers[i]);
+				vkCmdEndRenderPass(commandBuffer);
 			}
 
 
@@ -458,23 +462,70 @@ public:
 				renderPassBeginInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
 				renderPassBeginInfo.pClearValues = clearValues.data();
 
-				vkCmdBeginRenderPass(drawCmdBuffers[i], &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+				vkCmdBeginRenderPass(commandBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
 
 				VkViewport viewport = vks::initializers::viewport((float)width, (float)height, 0.0f, 1.0f);
-				vkCmdSetViewport(drawCmdBuffers[i], 0, 1, &viewport);
+				vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
 
 				VkRect2D scissor = vks::initializers::rect2D(width, height, 0, 0);
-				vkCmdSetScissor(drawCmdBuffers[i], 0, 1, &scissor);
+				vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
 
-				vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.scene, 0, 1, &descriptorSets.scene, 0, NULL);
+				vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.scene, 0, 1, &descriptorSets.scene, 0, NULL);
 
-				vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.scene);
+				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.scene);
 
-				sphere.draw(drawCmdBuffers[i], instanceCount, 0, pipelineLayouts.scene);
+				sphere.draw(commandBuffer, instanceCount, 0, pipelineLayouts.scene);
 
-				drawUI(drawCmdBuffers[i]);
+				drawUI(commandBuffer);
 
-				vkCmdEndRenderPass(drawCmdBuffers[i]);
+				vkCmdEndRenderPass(commandBuffer);
+			}
+
+			{
+				VkBufferMemoryBarrier buffer_barrier =
+				{
+					VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+					nullptr,
+					VK_ACCESS_SHADER_WRITE_BIT,
+					VK_ACCESS_SHADER_READ_BIT,
+					queueFamilyIndex,
+					queueFamilyIndex,
+					resourceBuffers.dispatch.buffer,
+					0,
+					resourceBuffers.dispatch.size
+				};
+
+				vkCmdPipelineBarrier(
+					commandBuffer,
+					VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+					0,
+					0, nullptr,
+					1, &buffer_barrier,
+					0, nullptr);
+			}
+
+			/*
+				Third pass: Calculate dispatch command on GPU
+			*/
+			{
+				// Dispatch the compute job
+				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelines.gpuCmd);
+				vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayouts.gpuCmd, 0, 1, &descriptorSets.gpuCmd, 0, 0);
+				vkCmdDispatch(commandBuffer, 1, 1, 1);
+			}
+
+			/*
+				Fourth pass: Compute particles
+			*/
+			{
+				// Dispatch the compute job
+				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelines.compute);
+				vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipelineLayouts.compute, 0, 1, &descriptorSets.compute, 0, 0);
+				// We'll process one particle per thread, and the 
+				// particle count is determined in fragment shader,
+				// thus it's best to use indirect dispatch to read parameters directly in GPU buffer.
+				vkCmdDispatchIndirect(commandBuffer, resourceBuffers.dispatch.buffer, 0);
 			}
 
 
@@ -829,7 +880,11 @@ public:
 
 	void updateUniformBufferModel()
 	{
+		static float lastTimer = 0.0;
+
 		uboModelData.alphaReference = timer;
+		uboModelData.deltaAlphaEstimation = timer - lastTimer;
+		lastTimer = timer;
 
 		VK_CHECK_RESULT(uniformBuffers.modelData.map());
 		uniformBuffers.modelData.copyTo(&uboModelData, sizeof(uboModelData));

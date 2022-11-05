@@ -39,14 +39,18 @@ void main()
 	// model alpha which is less than alpha reference will be invisable.
 	if (modelAlpha < modelData.alphaReference)
 	{
-		uint index = atomicAdd(dispatchBuffer.particleCount, 1);
-
-		appendJobs[index].screenPos = vec2(gl_FragCoord.x, gl_FragCoord.y);
-
 		discard;
 	}
-	else
+
+	// Determine if current pixel will be invisable next frame.
+	float nextAlphaReference = modelData.alphaReference + modelData.deltaAlphaEstimation;
+	if (modelAlpha < nextAlphaReference)
 	{
-		outColor = vec4(gray, gray, gray, 1.0) * vec4(inColor, 1.0);
+		// If it's going to be invisable, append information in the append buffer,
+		// such that it can be replaced by particle next frame.
+		uint index = atomicAdd(dispatchBuffer.particleCount, 1);
+		appendJobs[index].screenPos = vec2(gl_FragCoord.x, gl_FragCoord.y);
 	}
+
+	outColor = vec4(gray, gray, gray, 1.0) * vec4(inColor, 1.0);
 }

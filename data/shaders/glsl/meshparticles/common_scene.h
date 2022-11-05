@@ -2,6 +2,7 @@
 layout(binding = 0) uniform UBOModel
 {
 	float alphaReference;
+	float deltaAlphaEstimation;
 } modelData;
 
 layout(binding = 1) uniform UBOView
