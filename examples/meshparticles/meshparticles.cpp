@@ -18,13 +18,12 @@ public:
 
 	vkglTF::Model sphere;
 	vks::Texture2D particlespawn;
-	vks::Texture2D noise;
 
 	constexpr static uint32_t particleCount = 128 * 1024;
 	constexpr static uint32_t instanceCount = 2;
 
 	struct UBOModelData {
-		float modelAlpha = 1.0f;
+		float alphaReference = 0.0f;
 	} uboModelData;
 
 	struct UBOViewlData {
@@ -154,7 +153,6 @@ public:
 	~VulkanExample()
 	{
 		particlespawn.destroy();
-		noise.destroy();
 
 		resourceBuffers.instancing.destroy();
 		resourceBuffers.dispatch.destroy();
@@ -399,7 +397,6 @@ public:
 
 		sphere.loadFromFile(getAssetPath() + "models/sphere.gltf", vulkanDevice, queue, gltfLoadingFlags);
 		particlespawn.loadFromFile(getAssetPath() + "textures/particlespawn.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
-		noise.loadFromFile(getAssetPath() + "textures/noise.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
 	}
 
 	void buildCommandBuffers()
@@ -510,12 +507,10 @@ public:
 				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 2),
 				// Binding 3 : material texture
 				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 3),
-				// Binding 4 : noise texture
-				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 4),
-				// Binding 5 : Append buffer
-				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT, 5),
-				// Binding 6 : Dispatch buffer
-				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT, 6)
+				// Binding 4 : Append buffer
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT, 4),
+				// Binding 5 : Dispatch buffer
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT, 5)
 			};
 
 			VkDescriptorSetLayoutCreateInfo descriptorLayout = vks::initializers::descriptorSetLayoutCreateInfo(setLayoutBindings);
@@ -611,12 +606,10 @@ public:
 				vks::initializers::writeDescriptorSet(descriptorSets.scene, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2, &resourceBuffers.instancing.descriptor),
 				// Binding 3 : Material texture
 				vks::initializers::writeDescriptorSet(descriptorSets.scene, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3, &particlespawn.descriptor),
-				// Binding 4 : Noise texture
-				vks::initializers::writeDescriptorSet(descriptorSets.scene, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4, &noise.descriptor),
-				// Binding 5 : Append buffer
-				vks::initializers::writeDescriptorSet(descriptorSets.scene, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 5, &resourceBuffers.append.descriptor),
-				// Binding 6 : Dispatch buffer
-				vks::initializers::writeDescriptorSet(descriptorSets.scene, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6, &resourceBuffers.append.descriptor)
+				// Binding 4 : Append buffer
+				vks::initializers::writeDescriptorSet(descriptorSets.scene, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4, &resourceBuffers.append.descriptor),
+				// Binding 5 : Dispatch buffer
+				vks::initializers::writeDescriptorSet(descriptorSets.scene, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 5, &resourceBuffers.append.descriptor)
 			};
 			vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
 		}
@@ -734,8 +727,7 @@ public:
 			VkPipelineDepthStencilStateCreateInfo depthStencilState = vks::initializers::pipelineDepthStencilStateCreateInfo(VK_TRUE, VK_TRUE, VK_COMPARE_OP_LESS);
 			pipelineCreateInfo.pDepthStencilState = &depthStencilState;
 
-			// Fragment shader is not needed for a depth only pass.
-			pipelineCreateInfo.stageCount = 1;
+			shaderStages[1] = loadShader(getShadersPath() + "meshparticles/depth.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
 			VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCreateInfo, nullptr, &pipelines.depthOnly));
 		}
 	}
@@ -837,7 +829,7 @@ public:
 
 	void updateUniformBufferModel()
 	{
-		uboModelData.modelAlpha = 1.0f - timer;
+		uboModelData.alphaReference = timer;
 
 		VK_CHECK_RESULT(uniformBuffers.modelData.map());
 		uniformBuffers.modelData.copyTo(&uboModelData, sizeof(uboModelData));
@@ -903,7 +895,7 @@ public:
 	virtual void OnUpdateUIOverlay(vks::UIOverlay* overlay)
 	{
 		if (overlay->header("Settings")) {
-			if (overlay->sliderFloat("Model Alpha", &uboModelData.modelAlpha, 0.0f, 1.0f)) {
+			if (overlay->sliderFloat("Alpha Reference", &uboModelData.alphaReference, 0.0f, 1.0f)) {
 				updateUniformBufferModel();
 			}
 		}

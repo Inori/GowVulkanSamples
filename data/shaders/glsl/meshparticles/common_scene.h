@@ -1,7 +1,7 @@
 
 layout(binding = 0) uniform UBOModel
 {
-	float modelAlpha;
+	float alphaReference;
 } modelData;
 
 layout(binding = 1) uniform UBOView
