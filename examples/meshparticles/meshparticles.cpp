@@ -52,6 +52,11 @@ public:
 		float deltaT;						// Frame delta time
 	} particleSystem;
 
+	struct DispatchBuffer {
+		VkDispatchIndirectCommand cmd;
+		uint32_t particleCount;
+	};
+
 	struct {
 		vks::Buffer modelData;
 		vks::Buffer viewData;
@@ -72,25 +77,29 @@ public:
 		VkPipeline depthOnly;
 		VkPipeline scene;
 		VkPipeline compute;
+		VkPipeline gpuCmd;
 		VkPipeline particle;
 	} pipelines;
 
 	struct {
 		VkPipelineLayout scene;
 		VkPipelineLayout compute;
+		VkPipelineLayout gpuCmd;
 		VkPipelineLayout paraticle;
 	} pipelineLayouts;
 
 	struct {
-		const uint32_t count = 3;
+		const uint32_t count = 64;
 		VkDescriptorSet scene;
 		VkDescriptorSet compute;
+		VkDescriptorSet gpuCmd;
 		VkDescriptorSet particle;
 	} descriptorSets;
 
 	struct {
 		VkDescriptorSetLayout scene;
 		VkDescriptorSetLayout compute;
+		VkDescriptorSetLayout gpuCmd;
 		VkDescriptorSetLayout particle;
 	} descriptorSetLayouts;
 
@@ -480,9 +489,9 @@ public:
 	void setupDescriptorPool()
 	{
 		std::vector<VkDescriptorPoolSize> poolSizes = {
-			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 10),
-			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 10),
-			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 10)
+			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 16),
+			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 16),
+			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 16)
 		};
 		VkDescriptorPoolCreateInfo descriptorPoolInfo = vks::initializers::descriptorPoolCreateInfo(poolSizes, descriptorSets.count);
 		VK_CHECK_RESULT(vkCreateDescriptorPool(device, &descriptorPoolInfo, nullptr, &descriptorPool));
@@ -538,6 +547,25 @@ public:
 			VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo =
 				vks::initializers::pipelineLayoutCreateInfo(&descriptorSetLayouts.particle, 1);
 			VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo, nullptr, &pipelineLayouts.paraticle));
+		}
+
+		// Dispatch command calculate pass
+		{
+			std::vector<VkDescriptorSetLayoutBinding> setLayoutBindings = {
+				// Binding 0 : GPU dispatch command
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 0)
+			};
+
+			VkDescriptorSetLayoutCreateInfo descriptorLayout =
+				vks::initializers::descriptorSetLayoutCreateInfo(
+					setLayoutBindings.data(),
+					static_cast<uint32_t>(setLayoutBindings.size()));
+
+			VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorLayout, nullptr, &descriptorSetLayouts.gpuCmd));
+
+			VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo =
+				vks::initializers::pipelineLayoutCreateInfo(&descriptorSetLayouts.gpuCmd, 1);
+			VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo, nullptr, &pipelineLayouts.gpuCmd));
 		}
 
 		// Compute pass
@@ -611,6 +639,18 @@ public:
 			vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
 		}
 
+		// Dispatch command calculate pass
+		{
+			VkDescriptorSetAllocateInfo allocInfo = vks::initializers::descriptorSetAllocateInfo(descriptorPool, &descriptorSetLayouts.gpuCmd, 1);
+			VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSets.gpuCmd));
+
+			std::vector<VkWriteDescriptorSet> computeWriteDescriptorSets =
+			{
+				// Binding 0 : GPU dispatch command
+				vks::initializers::writeDescriptorSet(descriptorSets.gpuCmd, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 0, &resourceBuffers.dispatch.descriptor)
+			};
+			vkUpdateDescriptorSets(device, static_cast<uint32_t>(computeWriteDescriptorSets.size()), computeWriteDescriptorSets.data(), 0, NULL);
+		}
 
 		// Compute pass
 		{
@@ -727,10 +767,10 @@ public:
 
 		// Dispatch buffer
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 			&resourceBuffers.dispatch,
-			sizeof(VkDispatchIndirectCommand)));
+			sizeof(DispatchBuffer)));
 
 		// Append buffer
 		VkDeviceSize appendBufferSize = width * height * sizeof(AppendJob);
@@ -780,10 +820,19 @@ public:
 
 	void prepareComputePipelines()
 	{
-		// Create pipeline
-		VkComputePipelineCreateInfo computePipelineCreateInfo = vks::initializers::computePipelineCreateInfo(pipelineLayouts.compute, 0);
-		computePipelineCreateInfo.stage = loadShader(getShadersPath() + "meshparticles/particle.comp.spv", VK_SHADER_STAGE_COMPUTE_BIT);
-		VK_CHECK_RESULT(vkCreateComputePipelines(device, pipelineCache, 1, &computePipelineCreateInfo, nullptr, &pipelines.compute));
+		// Create pipelines
+
+		{
+			VkComputePipelineCreateInfo computePipelineCreateInfo = vks::initializers::computePipelineCreateInfo(pipelineLayouts.compute, 0);
+			computePipelineCreateInfo.stage = loadShader(getShadersPath() + "meshparticles/particle.comp.spv", VK_SHADER_STAGE_COMPUTE_BIT);
+			VK_CHECK_RESULT(vkCreateComputePipelines(device, pipelineCache, 1, &computePipelineCreateInfo, nullptr, &pipelines.compute));
+		}
+
+		{
+			VkComputePipelineCreateInfo computePipelineCreateInfo = vks::initializers::computePipelineCreateInfo(pipelineLayouts.gpuCmd, 0);
+			computePipelineCreateInfo.stage = loadShader(getShadersPath() + "meshparticles/gpu_cmd.comp.spv", VK_SHADER_STAGE_COMPUTE_BIT);
+			VK_CHECK_RESULT(vkCreateComputePipelines(device, pipelineCache, 1, &computePipelineCreateInfo, nullptr, &pipelines.gpuCmd));
+		}
 	}
 
 	void updateUniformBufferModel()

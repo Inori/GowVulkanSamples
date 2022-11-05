@@ -1,0 +1,23 @@
+#version 450
+
+#include "dispatch_cmd.h"
+
+
+layout(std140, binding = 0) buffer DispatchCmdBuffer
+{
+   DispatchBuffer dispatchBuffer;
+};
+
+// Work group size of particle.comp
+#define PARTICLE_COMPUTE_WORKGROUP_SIZE 64
+
+layout (local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+void main() 
+{
+	uint groupX = (dispatchBuffer.particleCount + PARTICLE_COMPUTE_WORKGROUP_SIZE - 1) / PARTICLE_COMPUTE_WORKGROUP_SIZE;
+	dispatchBuffer.cmd.x = groupX;
+	dispatchBuffer.cmd.y = 1;
+	dispatchBuffer.cmd.z = 1;
+}
+

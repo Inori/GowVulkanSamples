@@ -1,6 +1,7 @@
 #version 450
 
 #include "common_scene.h"
+#include "dispatch_cmd.h"
 
 layout(early_fragment_tests) in;
 
@@ -17,21 +18,14 @@ struct AppendJob
 	vec2 screenPos;
 };
 
-struct VkDispatchIndirectCommand
-{
-	uint x;
-	uint y;
-	uint z;
-};
-
-layout(binding = 5) buffer AppendBuffer
+layout(std140, binding = 5) buffer AppendBuffer
 {
    AppendJob appendJobs[];
 };
 
-layout(binding = 6) buffer DispatchBuffer
+layout(std140, binding = 6) buffer DispatchCmdBuffer
 {
-   VkDispatchIndirectCommand dispatchCommand;
+   DispatchBuffer dispatchBuffer;
 };
 
 layout (location = 0) out vec4 outColor;
@@ -49,8 +43,7 @@ void main()
 	}
 	else
 	{
-		uint indexMinusOne = atomicAdd(dispatchCommand.x, 1);
-		uint index = indexMinusOne + 1;
+		uint index = atomicAdd(dispatchBuffer.particleCount, 1);
 
 		appendJobs[index].screenPos = vec2(gl_FragCoord.x, gl_FragCoord.y);
 
