@@ -10,5 +10,13 @@ layout (location = 0) out vec4 outFragColor;
 void main() 
 {
 	vec4 sceneAlbedo = texture(samplerSceneAlbedo, inUV);
-	outFragColor = sceneAlbedo;
+	vec4 particleAlbedo = texture(samplerParticleAlbedo, inUV);
+	if (particleAlbedo.a > 0.0)
+	{
+		outFragColor = sceneAlbedo;
+	}
+	else
+	{
+		outFragColor = sceneAlbedo;
+	}
 }

@@ -23,7 +23,7 @@ layout(binding = 0) uniform UBO
 
 layout(binding = 1) buffer AppendBuffer
 {
-   AppendJob appendJob[];
+   AppendJob appendJobs[];
 };
 
 layout(binding = 2) buffer ParticleBuffer
@@ -35,6 +35,11 @@ layout (local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 void main() 
 {
-	particles[0].pos = vec4(0, 0, 0, 0);
+	uint id = gl_GlobalInvocationID.x;
+
+	AppendJob job = appendJobs[id];
+
+	particles[id].pos = vec4(job.screenPos.x, job.screenPos.y, 0.0, 1.0);
+	particles[id].color = vec4(job.screenPos.x, job.screenPos.y, 0.0, 1.0);
 }
 

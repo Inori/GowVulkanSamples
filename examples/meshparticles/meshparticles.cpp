@@ -74,7 +74,7 @@ public:
 	struct {
 		vks::Buffer instancing;
 		// VkDispatchIndirectCommand
-		vks::Buffer dispatch;
+		vks::Buffer gpucmd;
 		// AppendJob
 		vks::Buffer append;
 		// Particle
@@ -178,7 +178,7 @@ public:
 		particlespawn.destroy();
 
 		resourceBuffers.instancing.destroy();
-		resourceBuffers.dispatch.destroy();
+		resourceBuffers.gpucmd.destroy();
 		resourceBuffers.append.destroy();
 		resourceBuffers.particle.destroy();
 
@@ -205,7 +205,7 @@ public:
 	// Create a frame buffer attachment
 	void createAttachment(
 		VkFormat format,
-		VkImageUsageFlagBits usage,
+		VkImageUsageFlags usage,
 		FrameBufferAttachment* attachment,
 		uint32_t width,
 		uint32_t height)
@@ -333,7 +333,7 @@ public:
 
 		// Scene
 		{
-			createAttachment(VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, &offscreenFrameBuffers.scene.color, width, height);
+			createAttachment(VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, &offscreenFrameBuffers.scene.color, width, height);
 
 			std::array<VkAttachmentDescription, 2> attachmentDescs = {};
 
@@ -413,7 +413,7 @@ public:
 
 		// Particle
 		{
-			createAttachment(VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, &offscreenFrameBuffers.particle.color, width, height);
+			createAttachment(VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, &offscreenFrameBuffers.particle.color, width, height);
 
 			VkAttachmentDescription attachmentDescription{};
 			attachmentDescription.format = offscreenFrameBuffers.particle.color.format;
@@ -506,7 +506,7 @@ public:
 		attachments[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 		attachments[1].stencilLoadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
 		attachments[1].stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-		attachments[1].initialLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+		attachments[1].initialLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 		attachments[1].finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
 
 		VkAttachmentReference colorReference = {};
@@ -586,7 +586,7 @@ public:
 				Clear pass
 			*/
 			{
-				vkCmdFillBuffer(commandBuffer, resourceBuffers.dispatch.buffer, 0, VK_WHOLE_SIZE, 0);
+				vkCmdFillBuffer(commandBuffer, resourceBuffers.gpucmd.buffer, 0, VK_WHOLE_SIZE, 0);
 				vkCmdFillBuffer(commandBuffer, resourceBuffers.append.buffer, 0, VK_WHOLE_SIZE, 0);
 
 				VkBufferMemoryBarrier buffer_barrier =
@@ -597,9 +597,9 @@ public:
 					VK_ACCESS_SHADER_READ_BIT,
 					queueFamilyIndex,
 					queueFamilyIndex,
-					resourceBuffers.dispatch.buffer,
+					resourceBuffers.gpucmd.buffer,
 					0,
-					resourceBuffers.dispatch.size
+					resourceBuffers.gpucmd.size
 				};
 
 				vkCmdPipelineBarrier(
@@ -659,8 +659,9 @@ public:
 				Second pass: Scene rendering
 			*/
 			{
-				std::vector<VkClearValue> clearValues(1);
+				std::vector<VkClearValue> clearValues(2);
 				clearValues[0].color = defaultClearColor;
+				clearValues[1].depthStencil = { 1.0f, 0 };
 
 				VkRenderPassBeginInfo renderPassBeginInfo = vks::initializers::renderPassBeginInfo();
 				renderPassBeginInfo.renderPass = offscreenFrameBuffers.scene.renderPass;
@@ -696,9 +697,9 @@ public:
 					VK_ACCESS_SHADER_READ_BIT,
 					queueFamilyIndex,
 					queueFamilyIndex,
-					resourceBuffers.dispatch.buffer,
+					resourceBuffers.gpucmd.buffer,
 					0,
-					resourceBuffers.dispatch.size
+					resourceBuffers.gpucmd.size
 				};
 
 				vkCmdPipelineBarrier(
@@ -712,7 +713,7 @@ public:
 			}
 
 			/*
-				Third pass: Calculate dispatch command on GPU
+				Third pass: Calculate command on GPU
 			*/
 			{
 				// Dispatch the compute job
@@ -730,9 +731,9 @@ public:
 					VK_ACCESS_INDIRECT_COMMAND_READ_BIT,
 					queueFamilyIndex,
 					queueFamilyIndex,
-					resourceBuffers.dispatch.buffer,
+					resourceBuffers.gpucmd.buffer,
 					0,
-					resourceBuffers.dispatch.size
+					resourceBuffers.gpucmd.size
 				};
 
 				vkCmdPipelineBarrier(
@@ -755,7 +756,7 @@ public:
 				// We'll process one particle per thread, and the 
 				// particle count is determined in fragment shader,
 				// thus it's best to use indirect dispatch to read parameters directly in GPU buffer.
-				vkCmdDispatchIndirect(commandBuffer, resourceBuffers.dispatch.buffer, offsetof(GpuCmdBuffer, dispatchCmd));
+				vkCmdDispatchIndirect(commandBuffer, resourceBuffers.gpucmd.buffer, offsetof(GpuCmdBuffer, dispatchCmd));
 			}
 
 			{
@@ -764,7 +765,7 @@ public:
 					VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
 					nullptr,
 					VK_ACCESS_SHADER_WRITE_BIT,
-					VK_ACCESS_SHADER_READ_BIT,
+					VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT,
 					queueFamilyIndex,
 					queueFamilyIndex,
 					resourceBuffers.particle.buffer,
@@ -775,7 +776,7 @@ public:
 				vkCmdPipelineBarrier(
 					commandBuffer,
 					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-					VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+					VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
 					0,
 					0, nullptr,
 					1, &buffer_barrier,
@@ -811,7 +812,7 @@ public:
 
 				VkDeviceSize offsets[1] = { 0 };
 				vkCmdBindVertexBuffers(commandBuffer, PARTICLE_VERTEX_BUFFER_BIND_ID, 1, &resourceBuffers.particle.buffer, offsets);
-				vkCmdDrawIndirect(commandBuffer, resourceBuffers.dispatch.buffer, offsetof(GpuCmdBuffer, drawCmd), 1, 0);
+				vkCmdDrawIndirect(commandBuffer, resourceBuffers.gpucmd.buffer, offsetof(GpuCmdBuffer, drawCmd), 1, 0);
 				vkCmdEndRenderPass(commandBuffer);
 			}
 
@@ -824,15 +825,16 @@ public:
 				Final pass: Composition
 			*/
 			{
-				std::vector<VkClearValue> clearValues(1);
+				std::vector<VkClearValue> clearValues(2);
 				clearValues[0].color = defaultClearColor;
+				clearValues[1].depthStencil = { 1.0f, 0 };
 
 				VkRenderPassBeginInfo renderPassBeginInfo = vks::initializers::renderPassBeginInfo();
 				renderPassBeginInfo.renderPass = renderPass;
 				renderPassBeginInfo.framebuffer = VulkanExampleBase::frameBuffers[i];
 				renderPassBeginInfo.renderArea.extent.width = width;
 				renderPassBeginInfo.renderArea.extent.height = height;
-				renderPassBeginInfo.clearValueCount = 1;
+				renderPassBeginInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
 				renderPassBeginInfo.pClearValues = clearValues.data();
 
 				vkCmdBeginRenderPass(commandBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
@@ -937,7 +939,7 @@ public:
 			VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorLayout, nullptr, &descriptorSetLayouts.composition));
 
 			VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo =
-				vks::initializers::pipelineLayoutCreateInfo(&descriptorSetLayouts.particle, 1);
+				vks::initializers::pipelineLayoutCreateInfo(&descriptorSetLayouts.composition, 1);
 			VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo, nullptr, &pipelineLayouts.composition));
 		}
 
@@ -1006,7 +1008,7 @@ public:
 				// Binding 4 : Append buffer
 				vks::initializers::writeDescriptorSet(descriptorSets.scene, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4, &resourceBuffers.append.descriptor),
 				// Binding 5 : Dispatch buffer
-				vks::initializers::writeDescriptorSet(descriptorSets.scene, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 5, &resourceBuffers.dispatch.descriptor)
+				vks::initializers::writeDescriptorSet(descriptorSets.scene, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 5, &resourceBuffers.gpucmd.descriptor)
 			};
 			vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
 		}
@@ -1057,7 +1059,7 @@ public:
 			std::vector<VkWriteDescriptorSet> computeWriteDescriptorSets =
 			{
 				// Binding 0 : GPU dispatch command
-				vks::initializers::writeDescriptorSet(descriptorSets.gpuCmd, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 0, &resourceBuffers.dispatch.descriptor)
+				vks::initializers::writeDescriptorSet(descriptorSets.gpuCmd, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 0, &resourceBuffers.gpucmd.descriptor)
 			};
 			vkUpdateDescriptorSets(device, static_cast<uint32_t>(computeWriteDescriptorSets.size()), computeWriteDescriptorSets.data(), 0, NULL);
 		}
@@ -1219,7 +1221,7 @@ public:
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(
 			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-			&resourceBuffers.dispatch,
+			&resourceBuffers.gpucmd,
 			sizeof(GpuCmdBuffer)));
 
 		// Append buffer
@@ -1233,7 +1235,7 @@ public:
 		// Particle buffer
 		VkDeviceSize particleBufferSize = particleCount * sizeof(Particle);
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 			&resourceBuffers.particle,
 			particleBufferSize));
