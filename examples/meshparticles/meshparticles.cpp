@@ -175,6 +175,11 @@ public:
 		enabledFeatures.fragmentStoresAndAtomics = deviceFeatures.fragmentStoresAndAtomics;
 	}
 
+	void getEnabledExtensions()
+	{
+		enabledDeviceExtensions.push_back(VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME);
+	}
+
 	// Create a frame buffer attachment
 	void createAttachment(
 		VkFormat format,
@@ -413,6 +418,47 @@ public:
 			VkCommandBuffer& commandBuffer = drawCmdBuffers[i];
 
 			VK_CHECK_RESULT(vkBeginCommandBuffer(commandBuffer, &cmdBufInfo));
+
+			/*
+				Clear pass
+			*/
+			{
+				vkCmdFillBuffer(commandBuffer, resourceBuffers.dispatch.buffer, 0, VK_WHOLE_SIZE, 0);
+				vkCmdFillBuffer(commandBuffer, resourceBuffers.append.buffer, 0, VK_WHOLE_SIZE, 0);
+
+				VkBufferMemoryBarrier buffer_barrier =
+				{
+					VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+					nullptr,
+					VK_ACCESS_TRANSFER_WRITE_BIT,
+					VK_ACCESS_SHADER_READ_BIT,
+					queueFamilyIndex,
+					queueFamilyIndex,
+					resourceBuffers.dispatch.buffer,
+					0,
+					resourceBuffers.dispatch.size
+				};
+
+				vkCmdPipelineBarrier(
+					commandBuffer,
+					VK_PIPELINE_STAGE_TRANSFER_BIT,
+					VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+					0,
+					0, nullptr,
+					1, &buffer_barrier,
+					0, nullptr);
+
+				buffer_barrier.buffer = resourceBuffers.append.buffer;
+				buffer_barrier.size = resourceBuffers.append.size;
+				vkCmdPipelineBarrier(
+					commandBuffer,
+					VK_PIPELINE_STAGE_TRANSFER_BIT,
+					VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+					0,
+					0, nullptr,
+					1, &buffer_barrier,
+					0, nullptr);
+			}
 
 			/*
 				First pass: Depth only
@@ -660,7 +706,7 @@ public:
 				// Binding 4 : Append buffer
 				vks::initializers::writeDescriptorSet(descriptorSets.scene, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4, &resourceBuffers.append.descriptor),
 				// Binding 5 : Dispatch buffer
-				vks::initializers::writeDescriptorSet(descriptorSets.scene, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 5, &resourceBuffers.append.descriptor)
+				vks::initializers::writeDescriptorSet(descriptorSets.scene, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 5, &resourceBuffers.dispatch.descriptor)
 			};
 			vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
 		}
@@ -810,7 +856,7 @@ public:
 
 		// Dispatch buffer
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 			&resourceBuffers.dispatch,
 			sizeof(DispatchBuffer)));
@@ -818,7 +864,7 @@ public:
 		// Append buffer
 		VkDeviceSize appendBufferSize = width * height * sizeof(AppendJob);
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 			&resourceBuffers.append,
 			appendBufferSize));

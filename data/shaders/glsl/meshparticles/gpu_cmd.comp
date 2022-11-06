@@ -1,9 +1,10 @@
 #version 450
+#extension GL_EXT_debug_printf : enable
 
 #include "dispatch_cmd.h"
 
 
-layout(std140, binding = 0) buffer DispatchCmdBuffer
+layout(binding = 0) buffer DispatchCmdBuffer
 {
    DispatchBuffer dispatchBuffer;
 };
@@ -19,5 +20,7 @@ void main()
 	dispatchBuffer.cmd.x = groupX;
 	dispatchBuffer.cmd.y = 1;
 	dispatchBuffer.cmd.z = 1;
+
+	//debugPrintfEXT("groupX %d\n", groupX);
 }
 

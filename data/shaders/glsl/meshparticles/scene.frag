@@ -1,4 +1,5 @@
 #version 450
+#extension GL_EXT_debug_printf : enable
 
 #include "common_scene.h"
 #include "dispatch_cmd.h"
@@ -22,7 +23,7 @@ layout(std140, binding = 4) buffer AppendBuffer
    AppendJob appendJobs[];
 };
 
-layout(std140, binding = 5) buffer DispatchCmdBuffer
+layout(binding = 5) buffer DispatchCmdBuffer
 {
    DispatchBuffer dispatchBuffer;
 };
@@ -50,6 +51,9 @@ void main()
 		// such that it can be replaced by particle next frame.
 		uint index = atomicAdd(dispatchBuffer.particleCount, 1);
 		appendJobs[index].screenPos = vec2(gl_FragCoord.x, gl_FragCoord.y);
+
+		//debugPrintfEXT("index %d\n", index);
+		
 	}
 
 	outColor = vec4(gray, gray, gray, 1.0) * vec4(inColor, 1.0);
