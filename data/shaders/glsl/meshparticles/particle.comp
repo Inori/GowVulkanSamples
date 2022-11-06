@@ -16,17 +16,17 @@ struct AppendJob
 	vec2 screenPos;
 };
 
-layout(std140, binding = 0) uniform UBO
+layout(binding = 0) uniform UBO
 {
    ParticleSystem particleSystem;
 };
 
-layout(std140, binding = 1) buffer AppendBuffer
+layout(binding = 1) buffer AppendBuffer
 {
    AppendJob appendJob[];
 };
 
-layout(std140, binding = 2) buffer ParticleBuffer
+layout(binding = 2) buffer ParticleBuffer
 {
    Particle particles[];
 };

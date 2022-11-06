@@ -2,7 +2,7 @@
 #extension GL_EXT_debug_printf : enable
 
 #include "common_scene.h"
-#include "dispatch_cmd.h"
+#include "gpu_cmd.h"
 
 layout(early_fragment_tests) in;
 
@@ -18,14 +18,14 @@ struct AppendJob
 	vec2 screenPos;
 };
 
-layout(std140, binding = 4) buffer AppendBuffer
+layout(binding = 4) buffer AppendBuffer
 {
    AppendJob appendJobs[];
 };
 
-layout(binding = 5) buffer DispatchCmdBuffer
+layout(binding = 5) buffer SSBOGpuCmdBuffer
 {
-   DispatchBuffer dispatchBuffer;
+   GpuCmdBuffer gpuCmdBuffer;
 };
 
 layout (location = 0) out vec4 outColor;
@@ -49,11 +49,10 @@ void main()
 	{
 		// If it's going to be invisable, append information in the append buffer,
 		// such that it can be replaced by particle next frame.
-		uint index = atomicAdd(dispatchBuffer.particleCount, 1);
+		uint index = atomicAdd(gpuCmdBuffer.particleCount, 1);
 		appendJobs[index].screenPos = vec2(gl_FragCoord.x, gl_FragCoord.y);
 
 		//debugPrintfEXT("index %d\n", index);
-		
 	}
 
 	outColor = vec4(gray, gray, gray, 1.0) * vec4(inColor, 1.0);

@@ -1,12 +1,12 @@
 #version 450
 #extension GL_EXT_debug_printf : enable
 
-#include "dispatch_cmd.h"
+#include "gpu_cmd.h"
 
 
-layout(binding = 0) buffer DispatchCmdBuffer
+layout(binding = 0) buffer SSBOGpuCmdBuffer
 {
-   DispatchBuffer dispatchBuffer;
+   GpuCmdBuffer gpuCmdBuffer;
 };
 
 // Work group size of particle.comp
@@ -16,10 +16,15 @@ layout (local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
 void main() 
 {
-	uint groupX = (dispatchBuffer.particleCount + PARTICLE_COMPUTE_WORKGROUP_SIZE - 1) / PARTICLE_COMPUTE_WORKGROUP_SIZE;
-	dispatchBuffer.cmd.x = groupX;
-	dispatchBuffer.cmd.y = 1;
-	dispatchBuffer.cmd.z = 1;
+	uint groupX = (gpuCmdBuffer.particleCount + PARTICLE_COMPUTE_WORKGROUP_SIZE - 1) / PARTICLE_COMPUTE_WORKGROUP_SIZE;
+	gpuCmdBuffer.dispatchCmd.x = groupX;
+	gpuCmdBuffer.dispatchCmd.y = 1;
+	gpuCmdBuffer.dispatchCmd.z = 1;
+
+	gpuCmdBuffer.drawCmd.vertexCount = gpuCmdBuffer.particleCount;
+	gpuCmdBuffer.drawCmd.instanceCount = 1;
+	gpuCmdBuffer.drawCmd.firstVertex = 0;
+	gpuCmdBuffer.drawCmd.firstInstance = 0;
 
 	//debugPrintfEXT("groupX %d\n", groupX);
 }
