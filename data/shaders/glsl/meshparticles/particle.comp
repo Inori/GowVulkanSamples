@@ -23,29 +23,36 @@ struct AppendJob
 	vec2 screenPos;
 };
 
-layout(binding = 0) uniform UBO
+layout(binding = 0) uniform UBOView
+{
+	mat4 projection;
+	mat4 model;
+	mat4 view;
+} viewData;
+
+layout(binding = 1) uniform UBOParticleSysem
 {
    ParticleSystem particleSystem;
 };
 
-layout(binding = 1) buffer AppendBuffer
+layout(binding = 2) buffer AppendBuffer
 {
    AppendJob appendJobs[];
 };
 
-layout(binding = 2) buffer ParticleBuffer
+layout(binding = 3) buffer ParticleBuffer
 {
    Particle particles[];
 };
 
-layout (binding = 3) uniform sampler2D depthTexture;
+layout (binding = 4) uniform sampler2D depthTexture;
 
-layout(binding = 4) buffer SSBOGpuCmdBuffer
+layout(binding = 5) buffer SSBOGpuCmdBuffer
 {
    GpuCmdBuffer gpuCmdBuffer;
 };
 
-layout(binding = 5) buffer SSBOGlobalData
+layout(binding = 6) buffer SSBOGlobalData
 {
    GlobalParticleData globalData;
 };

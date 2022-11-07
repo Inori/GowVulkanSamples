@@ -996,18 +996,20 @@ public:
 		// Compute pass
 		{
 			std::vector<VkDescriptorSetLayoutBinding> setLayoutBindings = {
-				// Binding 0 : Particle system uniform buffer
+				// Binding 0 : Shader view data uniform buffer
 				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 0),
-				// Binding 1 : Append buffer
-				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 1),
-				// Binding 2 : Particle buffer
+				// Binding 1 : Particle system uniform buffer
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 1),
+				// Binding 2 : Append buffer
 				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 2),
-				// Binding 3 : Depth buffer
-				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_COMPUTE_BIT, 3),
-				// Binding 4 : GPU command
-				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 4),
-				// Binding 5 : Global particle data
+				// Binding 3 : Particle buffer
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 3),
+				// Binding 4 : Depth buffer
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_COMPUTE_BIT, 4),
+				// Binding 5 : GPU command
 				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 5),
+				// Binding 6 : Global particle data
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 6),
 			};
 
 			VkDescriptorSetLayoutCreateInfo descriptorLayout =
@@ -1111,18 +1113,20 @@ public:
 			};
 			std::vector<VkWriteDescriptorSet> computeWriteDescriptorSets =
 			{
-				// Binding 0 : Particle system buffer
-				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &uniformBuffers.particleSystem.descriptor),
-				// Binding 1 : Append buffer
-				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, &resourceBuffers.append.descriptor),
-				// Binding 2 : Particle buffer
-				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2, &resourceBuffers.particle.descriptor),
-				// Binding 3 : Depth buffer
-				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3, &imageDescriptors[0]),
-				// Binding 4 : GPU dispatch command
-				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4, &resourceBuffers.gpucmd.descriptor),
-				// Binding 5 : Global particle data
-				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 5, &resourceBuffers.global.descriptor),
+				// Binding 0 : Shader view data uniform buffer
+				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &uniformBuffers.viewData.descriptor),
+				// Binding 1 : Particle system buffer
+				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, &uniformBuffers.particleSystem.descriptor),
+				// Binding 2 : Append buffer
+				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2, &resourceBuffers.append.descriptor),
+				// Binding 3 : Particle buffer
+				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3, &resourceBuffers.particle.descriptor),
+				// Binding 4 : Depth buffer
+				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4, &imageDescriptors[0]),
+				// Binding 5 : GPU dispatch command
+				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 5, &resourceBuffers.gpucmd.descriptor),
+				// Binding 6 : Global particle data
+				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6, &resourceBuffers.global.descriptor),
 			};
 			vkUpdateDescriptorSets(device, static_cast<uint32_t>(computeWriteDescriptorSets.size()), computeWriteDescriptorSets.data(), 0, NULL);
 		}
