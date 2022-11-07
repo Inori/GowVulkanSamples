@@ -162,8 +162,7 @@ public:
 	} offscreenFrameBuffers;
 
 	// One sampler for the frame buffer color attachments
-	VkSampler colorSampler;
-	VkSampler depthSampler;
+	VkSampler sampler;
 
 	VulkanExample() : VulkanExampleBase(ENABLE_VALIDATION)
 	{
@@ -183,8 +182,7 @@ public:
 		resourceBuffers.append.destroy();
 		resourceBuffers.particle.destroy();
 
-		vkDestroySampler(device, colorSampler, nullptr);
-		vkDestroySampler(device, depthSampler, nullptr);
+		vkDestroySampler(device, sampler, nullptr);
 
 		vkDestroyPipeline(device, pipelines.scene, nullptr);
 
@@ -473,33 +471,19 @@ public:
 		}
 
 		// Shared sampler used for all color attachments
-		VkSamplerCreateInfo samplerColor = vks::initializers::samplerCreateInfo();
-		samplerColor.magFilter = VK_FILTER_LINEAR;
-		samplerColor.minFilter = VK_FILTER_LINEAR;
-		samplerColor.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-		samplerColor.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-		samplerColor.addressModeV = samplerColor.addressModeU;
-		samplerColor.addressModeW = samplerColor.addressModeU;
-		samplerColor.mipLodBias = 0.0f;
-		samplerColor.maxAnisotropy = 1.0f;
-		samplerColor.minLod = 0.0f;
-		samplerColor.maxLod = 1.0f;
-		samplerColor.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
-		VK_CHECK_RESULT(vkCreateSampler(device, &samplerColor, nullptr, &colorSampler));
-
-		VkSamplerCreateInfo samplerDepth = vks::initializers::samplerCreateInfo();
-		samplerDepth.magFilter = VK_FILTER_NEAREST;
-		samplerDepth.minFilter = VK_FILTER_NEAREST;
-		samplerDepth.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-		samplerDepth.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-		samplerDepth.addressModeV = samplerDepth.addressModeU;
-		samplerDepth.addressModeW = samplerDepth.addressModeU;
-		samplerDepth.mipLodBias = 0.0f;
-		samplerDepth.maxAnisotropy = 1.0f;
-		samplerDepth.minLod = 0.0f;
-		samplerDepth.maxLod = 1.0f;
-		samplerDepth.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
-		VK_CHECK_RESULT(vkCreateSampler(device, &samplerDepth, nullptr, &depthSampler));
+		VkSamplerCreateInfo samplerInfo = vks::initializers::samplerCreateInfo();
+		samplerInfo.magFilter = VK_FILTER_LINEAR;
+		samplerInfo.minFilter = VK_FILTER_LINEAR;
+		samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+		samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		samplerInfo.addressModeV = samplerInfo.addressModeU;
+		samplerInfo.addressModeW = samplerInfo.addressModeU;
+		samplerInfo.mipLodBias = 0.0f;
+		samplerInfo.maxAnisotropy = 1.0f;
+		samplerInfo.minLod = 0.0f;
+		samplerInfo.maxLod = 1.0f;
+		samplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+		VK_CHECK_RESULT(vkCreateSampler(device, &samplerInfo, nullptr, &sampler));
 	}
 
 	void setupRenderPass()
@@ -1057,8 +1041,8 @@ public:
 			VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSets.composition));
 			std::vector<VkDescriptorImageInfo> imageDescriptors =
 			{
-				vks::initializers::descriptorImageInfo(colorSampler, offscreenFrameBuffers.scene.color.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
-				vks::initializers::descriptorImageInfo(colorSampler, offscreenFrameBuffers.particle.color.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
+				vks::initializers::descriptorImageInfo(sampler, offscreenFrameBuffers.scene.color.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
+				vks::initializers::descriptorImageInfo(sampler, offscreenFrameBuffers.particle.color.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
 			};
 			writeDescriptorSets =
 			{
@@ -1089,7 +1073,7 @@ public:
 			VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSets.compute));
 			std::vector<VkDescriptorImageInfo> imageDescriptors =
 			{
-				vks::initializers::descriptorImageInfo(depthSampler, depthStencil.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
+				vks::initializers::descriptorImageInfo(sampler, depthStencil.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
 			};
 			std::vector<VkWriteDescriptorSet> computeWriteDescriptorSets =
 			{
