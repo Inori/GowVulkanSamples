@@ -163,6 +163,7 @@ public:
 
 	// One sampler for the frame buffer color attachments
 	VkSampler colorSampler;
+	VkSampler depthSampler;
 
 	VulkanExample() : VulkanExampleBase(ENABLE_VALIDATION)
 	{
@@ -183,6 +184,7 @@ public:
 		resourceBuffers.particle.destroy();
 
 		vkDestroySampler(device, colorSampler, nullptr);
+		vkDestroySampler(device, depthSampler, nullptr);
 
 		vkDestroyPipeline(device, pipelines.scene, nullptr);
 
@@ -471,19 +473,33 @@ public:
 		}
 
 		// Shared sampler used for all color attachments
-		VkSamplerCreateInfo sampler = vks::initializers::samplerCreateInfo();
-		sampler.magFilter = VK_FILTER_NEAREST;
-		sampler.minFilter = VK_FILTER_NEAREST;
-		sampler.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-		sampler.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
-		sampler.addressModeV = sampler.addressModeU;
-		sampler.addressModeW = sampler.addressModeU;
-		sampler.mipLodBias = 0.0f;
-		sampler.maxAnisotropy = 1.0f;
-		sampler.minLod = 0.0f;
-		sampler.maxLod = 1.0f;
-		sampler.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
-		VK_CHECK_RESULT(vkCreateSampler(device, &sampler, nullptr, &colorSampler));
+		VkSamplerCreateInfo samplerColor = vks::initializers::samplerCreateInfo();
+		samplerColor.magFilter = VK_FILTER_NEAREST;
+		samplerColor.minFilter = VK_FILTER_NEAREST;
+		samplerColor.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+		samplerColor.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		samplerColor.addressModeV = samplerColor.addressModeU;
+		samplerColor.addressModeW = samplerColor.addressModeU;
+		samplerColor.mipLodBias = 0.0f;
+		samplerColor.maxAnisotropy = 1.0f;
+		samplerColor.minLod = 0.0f;
+		samplerColor.maxLod = 1.0f;
+		samplerColor.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+		VK_CHECK_RESULT(vkCreateSampler(device, &samplerColor, nullptr, &colorSampler));
+
+		VkSamplerCreateInfo samplerDepth = vks::initializers::samplerCreateInfo();
+		samplerDepth.magFilter = VK_FILTER_LINEAR;
+		samplerDepth.minFilter = VK_FILTER_LINEAR;
+		samplerDepth.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+		samplerDepth.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+		samplerDepth.addressModeV = samplerDepth.addressModeU;
+		samplerDepth.addressModeW = samplerDepth.addressModeU;
+		samplerDepth.mipLodBias = 0.0f;
+		samplerDepth.maxAnisotropy = 1.0f;
+		samplerDepth.minLod = 0.0f;
+		samplerDepth.maxLod = 1.0f;
+		samplerDepth.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+		VK_CHECK_RESULT(vkCreateSampler(device, &samplerDepth, nullptr, &depthSampler));
 	}
 
 	void setupRenderPass()
@@ -866,6 +882,7 @@ public:
 		std::vector<VkDescriptorPoolSize> poolSizes = {
 			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 16),
 			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 16),
+			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 16),
 			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 16)
 		};
 		VkDescriptorPoolCreateInfo descriptorPoolInfo = vks::initializers::descriptorPoolCreateInfo(poolSizes, descriptorSets.count);
@@ -971,6 +988,8 @@ public:
 				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 1),
 				// Binding 2 : Particle buffer
 				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 2),
+				// Binding 3 : Depth buffer
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_COMPUTE_BIT, 3),
 			};
 
 			VkDescriptorSetLayoutCreateInfo descriptorLayout =
@@ -1068,15 +1087,20 @@ public:
 		{
 			VkDescriptorSetAllocateInfo allocInfo = vks::initializers::descriptorSetAllocateInfo(descriptorPool, &descriptorSetLayouts.compute,1);
 			VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSets.compute));
-
+			std::vector<VkDescriptorImageInfo> imageDescriptors =
+			{
+				vks::initializers::descriptorImageInfo(depthSampler, depthStencil.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
+			};
 			std::vector<VkWriteDescriptorSet> computeWriteDescriptorSets =
 			{
 				// Binding 0 : Particle system buffer
 				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &uniformBuffers.particleSystem.descriptor),
 				// Binding 1 : Append buffer
 				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, &resourceBuffers.append.descriptor),
-				// Binding 1 : Particle buffer
-				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2, &resourceBuffers.particle.descriptor)
+				// Binding 2 : Particle buffer
+				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2, &resourceBuffers.particle.descriptor),
+				// Binding 3 : Depth buffer
+				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3, &imageDescriptors[0])
 			};
 			vkUpdateDescriptorSets(device, static_cast<uint32_t>(computeWriteDescriptorSets.size()), computeWriteDescriptorSets.data(), 0, NULL);
 		}
@@ -1108,6 +1132,7 @@ public:
 
 		// Particle pipeline
 		{
+			inputAssemblyState.topology = VK_PRIMITIVE_TOPOLOGY_POINT_LIST;
 			depthStencilState.depthTestEnable = VK_FALSE;
 			depthStencilState.depthWriteEnable = VK_FALSE;
 			depthStencilState.depthCompareOp = VK_COMPARE_OP_NEVER;
@@ -1125,6 +1150,7 @@ public:
 
 		// Scene pipeline
 		{
+			inputAssemblyState.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 			// The depth buffer is already prepared in previous depth-only pass,
 			// so we don't write the depth buffer in final pass,
 			// and only fire fragment shader on equal depth value.
@@ -1146,6 +1172,7 @@ public:
 
 		// Depth only pipeline
 		{
+			inputAssemblyState.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 			// Enable depth test and detph write
 			VkPipelineDepthStencilStateCreateInfo depthStencilState = vks::initializers::pipelineDepthStencilStateCreateInfo(VK_TRUE, VK_TRUE, VK_COMPARE_OP_LESS);
 			pipelineCreateInfo.pDepthStencilState = &depthStencilState;
@@ -1166,6 +1193,7 @@ public:
 
 		// Final composition pipeline
 		{
+			inputAssemblyState.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 			// Enable alpha blend
 			VkPipelineColorBlendAttachmentState blendAttachmentState = vks::initializers::pipelineColorBlendAttachmentState(0xf, VK_FALSE);
 			blendAttachmentState.blendEnable = VK_TRUE;

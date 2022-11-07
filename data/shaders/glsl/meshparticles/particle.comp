@@ -31,6 +31,8 @@ layout(binding = 2) buffer ParticleBuffer
    Particle particles[];
 };
 
+layout (binding = 3) uniform sampler2D depthTexture;
+
 layout (local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 void main() 
@@ -38,8 +40,11 @@ void main()
 	uint id = gl_GlobalInvocationID.x;
 
 	AppendJob job = appendJobs[id];
+	ivec2 screenPos = ivec2(job.screenPos.x, job.screenPos.y);
 
-	particles[id].pos = vec4(job.screenPos.x, job.screenPos.y, 0.0, 1.0);
-	particles[id].color = vec4(job.screenPos.x, job.screenPos.y, 0.0, 1.0);
+	float depth = texelFetch(depthTexture, screenPos, 0).r;
+
+	particles[id].pos = vec4(screenPos.x, screenPos.y, 0.0, 1.0);
+	particles[id].color = vec4(screenPos.x, screenPos.y, depth, 1.0);
 }
 

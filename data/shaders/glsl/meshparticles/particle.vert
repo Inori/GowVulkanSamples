@@ -10,7 +10,7 @@ layout (location = 0) out vec4 outColor;
 void main() 
 {
 	gl_Position = viewData.projection * viewData.view * viewData.model * inPos;
-
+	gl_PointSize = 1.0;
 	outColor = inColor;
 }
 
