@@ -760,7 +760,29 @@ public:
 			}
 
 			{
-				VkBufferMemoryBarrier buffer_barrier =
+				VkBufferMemoryBarrier command_barrier =
+				{
+					VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+					nullptr,
+					VK_ACCESS_SHADER_WRITE_BIT,
+					VK_ACCESS_INDIRECT_COMMAND_READ_BIT,
+					queueFamilyIndex,
+					queueFamilyIndex,
+					resourceBuffers.gpucmd.buffer,
+					0,
+					resourceBuffers.gpucmd.size
+				};
+
+				vkCmdPipelineBarrier(
+					commandBuffer,
+					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+					VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,  // VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT: Stage of the pipeline where Draw/DispatchIndirect data structures are consumed.
+					0,
+					0, nullptr,
+					1, &command_barrier,
+					0, nullptr);
+
+				VkBufferMemoryBarrier vertex_barrier =
 				{
 					VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
 					nullptr,
@@ -779,7 +801,7 @@ public:
 					VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
 					0,
 					0, nullptr,
-					1, &buffer_barrier,
+					1, &vertex_barrier,
 					0, nullptr);
 			}
 
@@ -947,7 +969,7 @@ public:
 		// Dispatch command calculate pass
 		{
 			std::vector<VkDescriptorSetLayoutBinding> setLayoutBindings = {
-				// Binding 0 : GPU dispatch command
+				// Binding 0 : GPU command
 				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 0)
 			};
 
@@ -974,6 +996,8 @@ public:
 				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 2),
 				// Binding 3 : Depth buffer
 				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_COMPUTE_BIT, 3),
+				// Binding 4 : GPU command
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 4)
 			};
 
 			VkDescriptorSetLayoutCreateInfo descriptorLayout =
@@ -1054,7 +1078,7 @@ public:
 			vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
 		}
 
-		// Dispatch command calculate pass
+		// Gpu command calculate pass
 		{
 			VkDescriptorSetAllocateInfo allocInfo = vks::initializers::descriptorSetAllocateInfo(descriptorPool, &descriptorSetLayouts.gpuCmd, 1);
 			VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSets.gpuCmd));
@@ -1084,7 +1108,9 @@ public:
 				// Binding 2 : Particle buffer
 				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2, &resourceBuffers.particle.descriptor),
 				// Binding 3 : Depth buffer
-				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3, &imageDescriptors[0])
+				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3, &imageDescriptors[0]),
+				// Binding 4 : GPU dispatch command
+				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4, &resourceBuffers.gpucmd.descriptor)
 			};
 			vkUpdateDescriptorSets(device, static_cast<uint32_t>(computeWriteDescriptorSets.size()), computeWriteDescriptorSets.data(), 0, NULL);
 		}

@@ -21,11 +21,6 @@ void main()
 	gpuCmdBuffer.dispatchCmd.y = 1;
 	gpuCmdBuffer.dispatchCmd.z = 1;
 
-	gpuCmdBuffer.drawCmd.vertexCount = gpuCmdBuffer.particleCount;
-	gpuCmdBuffer.drawCmd.instanceCount = 1;
-	gpuCmdBuffer.drawCmd.firstVertex = 0;
-	gpuCmdBuffer.drawCmd.firstInstance = 0;
-
 	//debugPrintfEXT("groupX %d\n", groupX);
 }
 

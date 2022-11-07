@@ -1,5 +1,7 @@
 #version 450
 
+#include "gpu_cmd.h"
+
 struct ParticleSystem
 {
     float deltaT;
@@ -33,11 +35,21 @@ layout(binding = 2) buffer ParticleBuffer
 
 layout (binding = 3) uniform sampler2D depthTexture;
 
+layout(binding = 4) buffer SSBOGpuCmdBuffer
+{
+   GpuCmdBuffer gpuCmdBuffer;
+};
+
 layout (local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 void main() 
 {
 	uint id = gl_GlobalInvocationID.x;
+
+	if (id >= gpuCmdBuffer.particleCount)
+	{
+		return;
+	}
 
 	AppendJob job = appendJobs[id];
 	ivec2 screenPos = ivec2(job.screenPos.x, job.screenPos.y);
@@ -46,5 +58,12 @@ void main()
 
 	particles[id].pos = vec4(screenPos.x, screenPos.y, 0.0, 1.0);
 	particles[id].color = vec4(screenPos.x, screenPos.y, depth, 1.0);
+
+
+	// Update draw indirect command
+	atomicAdd(gpuCmdBuffer.drawCmd.vertexCount, 1);
+	gpuCmdBuffer.drawCmd.instanceCount = 1;
+	gpuCmdBuffer.drawCmd.firstVertex = 0;
+	gpuCmdBuffer.drawCmd.firstInstance = 0;
 }
 
