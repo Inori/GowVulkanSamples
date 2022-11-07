@@ -13,7 +13,8 @@ void main()
 	vec4 particleAlbedo = texture(samplerParticleAlbedo, inUV);
 	if (particleAlbedo.a > 0.0)
 	{
-		outFragColor = sceneAlbedo;
+		// outFragColor = sceneAlbedo;
+		outFragColor = vec4(0.0, particleAlbedo.g, 1.0, 1.0);
 	}
 	else
 	{

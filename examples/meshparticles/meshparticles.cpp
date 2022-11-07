@@ -815,8 +815,10 @@ public:
 				Fifth pass: Particle rendering
 			*/
 			{
+				// Clear particle render target to all zero, so that we know
+				// which pixel renders a particle.
 				std::vector<VkClearValue> clearValues(1);
-				clearValues[0].color = defaultClearColor;
+				clearValues[0].color = { { 0.0f, 0.0f, 0.0f, 0.0f } };
 
 				VkRenderPassBeginInfo renderPassBeginInfo = vks::initializers::renderPassBeginInfo();
 				renderPassBeginInfo.renderPass = offscreenFrameBuffers.particle.renderPass;
