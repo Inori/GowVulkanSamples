@@ -474,8 +474,8 @@ public:
 
 		// Shared sampler used for all color attachments
 		VkSamplerCreateInfo samplerColor = vks::initializers::samplerCreateInfo();
-		samplerColor.magFilter = VK_FILTER_NEAREST;
-		samplerColor.minFilter = VK_FILTER_NEAREST;
+		samplerColor.magFilter = VK_FILTER_LINEAR;
+		samplerColor.minFilter = VK_FILTER_LINEAR;
 		samplerColor.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
 		samplerColor.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
 		samplerColor.addressModeV = samplerColor.addressModeU;
@@ -488,9 +488,9 @@ public:
 		VK_CHECK_RESULT(vkCreateSampler(device, &samplerColor, nullptr, &colorSampler));
 
 		VkSamplerCreateInfo samplerDepth = vks::initializers::samplerCreateInfo();
-		samplerDepth.magFilter = VK_FILTER_LINEAR;
-		samplerDepth.minFilter = VK_FILTER_LINEAR;
-		samplerDepth.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+		samplerDepth.magFilter = VK_FILTER_NEAREST;
+		samplerDepth.minFilter = VK_FILTER_NEAREST;
+		samplerDepth.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
 		samplerDepth.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
 		samplerDepth.addressModeV = samplerDepth.addressModeU;
 		samplerDepth.addressModeW = samplerDepth.addressModeU;
