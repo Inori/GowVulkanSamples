@@ -20,8 +20,8 @@ public:
 	vkglTF::Model sphere;
 	vks::Texture2D particlespawn;
 
-	constexpr static uint32_t particleCountMax = 128 * 1024;
-	constexpr static uint32_t instanceCount = 2;
+	constexpr static uint32_t PARTICLE_COUNT_MAX = 128 * 1024;
+	constexpr static uint32_t INSTANCE_COUNT = 2;
 
 	struct UBOModelData {
 		float alphaReference = 0.0f;
@@ -30,12 +30,11 @@ public:
 
 	struct UBOViewlData {
 		glm::mat4 projection;
-		glm::mat4 model;
-		glm::mat4 view;
+		glm::mat4 modelView;
 	} uboViewData;
 
 	struct SRVInstanceData {
-		glm::vec4 instancePos[instanceCount];
+		glm::vec4 instancePos[INSTANCE_COUNT];
 	} srvInstanceData;
 
 	// Append buffer unit
@@ -60,7 +59,11 @@ public:
 	} particleSystem;
 
 	struct GlobalParticleData {
-		uint32_t aliveCount;
+		uint32_t particleCountMax = PARTICLE_COUNT_MAX;
+		uint32_t particleIndex = 0;
+		uint32_t renderCount = 0;
+		uint32_t cachedCount = 0;
+		uint32_t newEmiitedCount = 0;
 	} globalParticleData;
 
 	struct GpuCmdBuffer {
@@ -81,7 +84,7 @@ public:
 		vks::Buffer gpucmd;
 		// AppendJob
 		vks::Buffer append;
-		// Particle
+		// Particles ring buffer
 		vks::Buffer particle;
 		// Global particle data
 		vks::Buffer global;
@@ -169,6 +172,9 @@ public:
 
 	// One sampler for the frame buffer color attachments
 	VkSampler sampler;
+
+	// Model matrix
+	glm::mat4 matModel = glm::mat4(1.0f);
 
 	VulkanExample() : VulkanExampleBase(ENABLE_VALIDATION)
 	{
@@ -655,7 +661,7 @@ public:
 				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.depthOnly);
 
 				vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayouts.scene, 0, 1, &descriptorSets.scene, 0, NULL);
-				sphere.draw(commandBuffer, instanceCount, 0, pipelineLayouts.scene);
+				sphere.draw(commandBuffer, INSTANCE_COUNT, 0, pipelineLayouts.scene);
 
 				vkCmdEndRenderPass(commandBuffer);
 			}
@@ -689,7 +695,7 @@ public:
 
 				vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelines.scene);
 
-				sphere.draw(commandBuffer, instanceCount, 0, pipelineLayouts.scene);
+				sphere.draw(commandBuffer, INSTANCE_COUNT, 0, pipelineLayouts.scene);
 
 				vkCmdEndRenderPass(commandBuffer);
 			}
@@ -729,7 +735,7 @@ public:
 			}
 
 			{
-				VkBufferMemoryBarrier buffer_barrier =
+				VkBufferMemoryBarrier cmd_barrier =
 				{
 					VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
 					nullptr,
@@ -748,7 +754,29 @@ public:
 					VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,  // VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT: Stage of the pipeline where Draw/DispatchIndirect data structures are consumed.
 					0,
 					0, nullptr,
-					1, &buffer_barrier,
+					1, &cmd_barrier,
+					0, nullptr);
+
+				VkBufferMemoryBarrier global_barrier =
+				{
+					VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+					nullptr,
+					VK_ACCESS_SHADER_WRITE_BIT,
+					VK_ACCESS_SHADER_READ_BIT,
+					queueFamilyIndex,
+					queueFamilyIndex,
+					resourceBuffers.global.buffer,
+					0,
+					resourceBuffers.global.size
+				};
+
+				vkCmdPipelineBarrier(
+					commandBuffer,
+					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+					0,
+					0, nullptr,
+					1, &global_barrier,
 					0, nullptr);
 			}
 
@@ -766,28 +794,6 @@ public:
 			}
 
 			{
-				VkBufferMemoryBarrier command_barrier =
-				{
-					VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
-					nullptr,
-					VK_ACCESS_SHADER_WRITE_BIT,
-					VK_ACCESS_INDIRECT_COMMAND_READ_BIT,
-					queueFamilyIndex,
-					queueFamilyIndex,
-					resourceBuffers.gpucmd.buffer,
-					0,
-					resourceBuffers.gpucmd.size
-				};
-
-				vkCmdPipelineBarrier(
-					commandBuffer,
-					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-					VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,  // VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT: Stage of the pipeline where Draw/DispatchIndirect data structures are consumed.
-					0,
-					0, nullptr,
-					1, &command_barrier,
-					0, nullptr);
-
 				VkBufferMemoryBarrier vertex_barrier =
 				{
 					VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
@@ -974,11 +980,13 @@ public:
 			VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCreateInfo, nullptr, &pipelineLayouts.composition));
 		}
 
-		// Dispatch command calculate pass
+		// GPU command calculate pass
 		{
 			std::vector<VkDescriptorSetLayoutBinding> setLayoutBindings = {
 				// Binding 0 : GPU command
-				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 0)
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 0),
+				// Binding 1 : Global data
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 1),
 			};
 
 			VkDescriptorSetLayoutCreateInfo descriptorLayout =
@@ -996,18 +1004,18 @@ public:
 		// Compute pass
 		{
 			std::vector<VkDescriptorSetLayoutBinding> setLayoutBindings = {
-				// Binding 0 : Shader view data uniform buffer
+				// Binding 0 : Shader model data uniform buffer
 				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 0),
-				// Binding 1 : Particle system uniform buffer
+				// Binding 1 : Shader view data uniform buffer
 				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 1),
-				// Binding 2 : Append buffer
-				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 2),
-				// Binding 3 : Particle buffer
+				// Binding 2 : Particle system uniform buffer
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 2),
+				// Binding 3 : Append buffer
 				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 3),
-				// Binding 4 : Depth buffer
-				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_COMPUTE_BIT, 4),
-				// Binding 5 : GPU command
-				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 5),
+				// Binding 4 : Particle buffer
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 4),
+				// Binding 5 : Depth buffer
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_COMPUTE_BIT, 5),
 				// Binding 6 : Global particle data
 				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 6),
 			};
@@ -1097,8 +1105,10 @@ public:
 
 			std::vector<VkWriteDescriptorSet> computeWriteDescriptorSets =
 			{
-				// Binding 0 : GPU dispatch command
-				vks::initializers::writeDescriptorSet(descriptorSets.gpuCmd, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 0, &resourceBuffers.gpucmd.descriptor)
+				// Binding 0 : GPU command
+				vks::initializers::writeDescriptorSet(descriptorSets.gpuCmd, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 0, &resourceBuffers.gpucmd.descriptor),
+				// Binding 1 : Global data
+				vks::initializers::writeDescriptorSet(descriptorSets.gpuCmd, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, &resourceBuffers.global.descriptor)
 			};
 			vkUpdateDescriptorSets(device, static_cast<uint32_t>(computeWriteDescriptorSets.size()), computeWriteDescriptorSets.data(), 0, NULL);
 		}
@@ -1113,18 +1123,18 @@ public:
 			};
 			std::vector<VkWriteDescriptorSet> computeWriteDescriptorSets =
 			{
-				// Binding 0 : Shader view data uniform buffer
-				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &uniformBuffers.viewData.descriptor),
-				// Binding 1 : Particle system buffer
-				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, &uniformBuffers.particleSystem.descriptor),
-				// Binding 2 : Append buffer
-				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2, &resourceBuffers.append.descriptor),
-				// Binding 3 : Particle buffer
-				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3, &resourceBuffers.particle.descriptor),
-				// Binding 4 : Depth buffer
-				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4, &imageDescriptors[0]),
-				// Binding 5 : GPU dispatch command
-				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 5, &resourceBuffers.gpucmd.descriptor),
+				// Binding 0: Shader model data uniform buffer
+				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &uniformBuffers.modelData.descriptor),
+				// Binding 1: Shader view data uniform buffer
+				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, &uniformBuffers.viewData.descriptor),
+				// Binding 2: Particle system
+				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2, &uniformBuffers.particleSystem.descriptor),
+				// Binding 3 : Append buffer
+				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3, &resourceBuffers.append.descriptor),
+				// Binding 4 : Particle buffer
+				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4, &resourceBuffers.particle.descriptor),
+				// Binding 5 : Depth buffer
+				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 5, &imageDescriptors[0]),
 				// Binding 6 : Global particle data
 				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6, &resourceBuffers.global.descriptor),
 			};
@@ -1292,19 +1302,19 @@ public:
 			&resourceBuffers.global,
 			sizeof(GlobalParticleData)));
 
-		GlobalParticleData emptyGlobal = {};
+		GlobalParticleData initGlobal = {};
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(
 			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
 			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
 			&stagingBuffer,
-			sizeof(emptyGlobal),
-			&emptyGlobal));
+			sizeof(initGlobal),
+			&initGlobal));
 
 		vulkanDevice->copyBuffer(&stagingBuffer, &resourceBuffers.global, queue);
 		stagingBuffer.destroy();
 
 		// Particle buffer
-		VkDeviceSize particleBufferSize = particleCountMax * sizeof(Particle);
+		VkDeviceSize particleBufferSize = PARTICLE_COUNT_MAX * sizeof(Particle);
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(
 			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
@@ -1411,12 +1421,32 @@ public:
 	void updateUniformBufferView()
 	{
 		uboViewData.projection = camera.matrices.perspective;
-		uboViewData.view = camera.matrices.view;
-		uboViewData.model = glm::mat4(1.0f);
+		uboViewData.modelView = camera.matrices.view * matModel;
 
 		VK_CHECK_RESULT(uniformBuffers.viewData.map());
 		uniformBuffers.viewData.copyTo(&uboViewData, sizeof(uboViewData));
 		uniformBuffers.viewData.unmap();
+	}
+
+	void keyPressed(uint32_t vKeyCode)
+	{
+		switch (vKeyCode)
+		{
+		case KEY_W:
+			matModel = glm::translate(matModel, glm::vec3(0.0f, 0.0f, -0.1f));
+			break;
+		case KEY_S:
+			matModel = glm::translate(matModel, glm::vec3(0.0f, 0.0f, 0.1f));
+			break;
+		case KEY_A:
+			matModel = glm::translate(matModel, glm::vec3(-0.1f, 0.0f, 0.0f));
+			break;
+		case KEY_D:
+			matModel = glm::translate(matModel, glm::vec3(0.1f, 0.0f, 0.0f));
+			break;
+		}
+
+		updateUniformBufferView();
 	}
 
 	void draw()

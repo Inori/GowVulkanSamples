@@ -8,8 +8,7 @@ layout(binding = 0) uniform UBOModel
 layout(binding = 1) uniform UBOView
 {
 	mat4 projection;
-	mat4 model;
-	mat4 view;
+	mat4 modelView;
 } viewData;
 
 layout(binding = 2) buffer SRVInstance

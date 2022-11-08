@@ -1,16 +1,7 @@
 #version 450
 
+#include "common_particle.h"
 #include "gpu_cmd.h"
-
-struct ParticleSystem
-{
-    float deltaT;
-};
-
-struct GlobalParticleData
-{
-	uint aliveCount;
-};
 
 struct Particle
 {
@@ -23,34 +14,17 @@ struct AppendJob
 	vec2 screenPos;
 };
 
-layout(binding = 0) uniform UBOView
-{
-	mat4 projection;
-	mat4 model;
-	mat4 view;
-} viewData;
-
-layout(binding = 1) uniform UBOParticleSysem
-{
-   ParticleSystem particleSystem;
-};
-
-layout(binding = 2) buffer AppendBuffer
+layout(binding = 3) buffer AppendBuffer
 {
    AppendJob appendJobs[];
 };
 
-layout(binding = 3) buffer ParticleBuffer
+layout(binding = 4) buffer ParticleBuffer
 {
    Particle particles[];
 };
 
-layout (binding = 4) uniform sampler2D depthTexture;
-
-layout(binding = 5) buffer SSBOGpuCmdBuffer
-{
-   GpuCmdBuffer gpuCmdBuffer;
-};
+layout (binding = 5) uniform sampler2D depthTexture;
 
 layout(binding = 6) buffer SSBOGlobalData
 {
@@ -63,25 +37,35 @@ void main()
 {
 	uint id = gl_GlobalInvocationID.x;
 
-	if (id >= gpuCmdBuffer.particleCount)
+	if (id >= globalData.renderCount)
 	{
 		return;
 	}
 
-	AppendJob job = appendJobs[id];
-	ivec2 screenPos = ivec2(job.screenPos.x, job.screenPos.y);
+	Particle particle = particles[id];
+	if (id >= globalData.cachedCount && id < globalData.cachedCount + globalData.newEmiitedCount)
+	{
+		// new particle emitted this frame
 
-	float depth = texelFetch(depthTexture, screenPos, 0).r;
+		uint jobId = id - globalData.cachedCount;
+		AppendJob job = appendJobs[jobId];
 
-	particles[id].pos = vec4(screenPos.x, screenPos.y, 0.0, 1.0);
-	particles[id].color = vec4(screenPos.x, screenPos.y, depth, 1.0);
+		ivec2 screenPos = ivec2(job.screenPos.x, job.screenPos.y);
+		float depth = texelFetch(depthTexture, screenPos, 0).r;
 
-	atomicAdd(globalData.aliveCount, 1);
+		particle.pos = vec4(screenPos.x, screenPos.y, 0.0, 1.0);
+		particle.color = vec4(screenPos.x, screenPos.y, depth, 1.0);
 
-	// Update draw indirect command
-	atomicAdd(gpuCmdBuffer.drawCmd.vertexCount, 1);
-	gpuCmdBuffer.drawCmd.instanceCount = 1;
-	gpuCmdBuffer.drawCmd.firstVertex = 0;
-	gpuCmdBuffer.drawCmd.firstInstance = 0;
+		// increase indexs
+		atomicAdd(globalData.particleIndex, 1);
+	}
+	else
+	{
+		// previous alived particle
+
+	}
+
+	// update particle
+	particles[id] = particle;
 }
 

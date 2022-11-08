@@ -16,8 +16,17 @@ struct VkDrawIndirectCommand
 
 struct GpuCmdBuffer
 {
-	uint particleCount;
+	uint particleCount;                      // particle count emitted this frame
 	VkDispatchIndirectCommand dispatchCmd;
 	VkDrawIndirectCommand drawCmd;
+};
+
+struct GlobalParticleData
+{
+	uint particleCountMax;		// ring buffer size, never change
+	uint particleIndex;			// ring buffer index
+	uint renderCount;			// particle render count this frame, equals compute shader thread count
+	uint cachedCount;			// slot count in particle ring buffer before current particleIndex
+	uint newEmiitedCount;		// newly emitted particle count this frame
 };
 

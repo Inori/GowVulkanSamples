@@ -15,15 +15,15 @@ layout (location = 3) out vec3 outPos;
 void main() 
 {
 	vec4 instancePos = inPos + instanceData.instancePos[gl_InstanceIndex];
-	gl_Position = viewData.projection * viewData.view * viewData.model * instancePos;
+	gl_Position = viewData.projection * viewData.modelView * instancePos;
 	
 	outUV = inUV;
 
 	// Vertex position in view space
-	outPos = vec3(viewData.view * viewData.model * inPos);
+	outPos = vec3(viewData.modelView * inPos);
 
 	// Normal in view space
-	mat3 normalMatrix = transpose(inverse(mat3(viewData.view * viewData.model)));
+	mat3 normalMatrix = transpose(inverse(mat3(viewData.modelView)));
 	outNormal = normalMatrix * inNormal;
 
 	outColor = inColor;
