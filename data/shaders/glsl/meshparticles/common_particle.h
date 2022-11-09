@@ -13,10 +13,13 @@ layout(binding = 1) uniform UBOView
 struct ParticleSystem
 {
 	float deltaT;
+	float speed;
+	float random;
 };
 
 layout(std140, binding = 2) uniform ParticleSystemBuffer
 {
 	ParticleSystem particleSystem;
-} instanceData;
+};
+
 

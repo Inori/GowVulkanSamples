@@ -59,12 +59,22 @@ void main()
 		gpuCmdBuffer.drawCmd.firstVertex = 0;
 		gpuCmdBuffer.drawCmd.firstInstance = 0;
 
-		debugPrintfEXT("no particle.\n");
+		//debugPrintfEXT("no particle.\n");
 	}
 
 	globalData.renderCount = particleRenderCount;
 	globalData.cachedCount = globalData.particleIndex;
 	globalData.newEmiitedCount = gpuCmdBuffer.particleCount;
+
+	bool restart = (gpuCmdBuffer.particleCount == 0);
+	if(restart)
+	{
+		globalData.particleIndex = 0;
+		globalData.renderCount = 0;
+		globalData.cachedCount = 0;
+		globalData.newEmiitedCount = 0;
+	}
+
 }
 
 

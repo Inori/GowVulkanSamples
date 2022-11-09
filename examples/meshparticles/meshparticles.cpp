@@ -20,7 +20,7 @@ public:
 	vkglTF::Model sphere;
 	vks::Texture2D particlespawn;
 
-	constexpr static uint32_t PARTICLE_COUNT_MAX = 128 * 1024;
+	constexpr static uint32_t PARTICLE_COUNT_MAX = 128 * 1024 * 10;
 	constexpr static uint32_t INSTANCE_COUNT = 2;
 
 	struct UBOModelData {
@@ -55,7 +55,9 @@ public:
 	} vertexState;
 
 	struct ParticleSystem {					// Compute shader uniform block object
-		float deltaT;						// Frame delta time
+		float deltaT = 0.0;					// Frame delta time
+		float speed = 0.001;
+		float random = 0.0;
 	} particleSystem;
 
 	struct GlobalParticleData {
@@ -176,6 +178,8 @@ public:
 	// Model matrix
 	glm::mat4 matModel = glm::mat4(1.0f);
 
+	std::default_random_engine rndEngine;
+
 	VulkanExample() : VulkanExampleBase(ENABLE_VALIDATION)
 	{
 		title = "Disintegrating Meshes with Particles";
@@ -183,6 +187,8 @@ public:
 		camera.position = { 0.0f, 0.0f, -2.5f };
 		camera.setRotation(glm::vec3(0.0f, 0.0f, 0.0f));
 		camera.setPerspective(60.0f, (float)width / (float)height, 0.1f, 256.0f);
+
+		rndEngine.seed(benchmark.active ? 0 : (unsigned)time(nullptr));
 	}
 
 	~VulkanExample()
@@ -1405,6 +1411,12 @@ public:
 		}
 	}
 
+	float rnd(float range)
+	{
+		std::uniform_real_distribution<float> rndDist(0.0f, range);
+		return rndDist(rndEngine);
+	}
+
 	void updateUniformBufferModel()
 	{
 		static float lastTimer = 0.0;
@@ -1426,6 +1438,16 @@ public:
 		VK_CHECK_RESULT(uniformBuffers.viewData.map());
 		uniformBuffers.viewData.copyTo(&uboViewData, sizeof(uboViewData));
 		uniformBuffers.viewData.unmap();
+	}
+
+	void updateUniformBufferParticleSystem()
+	{
+		particleSystem.deltaT = frameTimer;
+		particleSystem.random = rnd(1.0f);
+
+		VK_CHECK_RESULT(uniformBuffers.particleSystem.map());
+		uniformBuffers.particleSystem.copyTo(&particleSystem, sizeof(particleSystem));
+		uniformBuffers.particleSystem.unmap();
 	}
 
 	void keyPressed(uint32_t vKeyCode)
@@ -1483,6 +1505,7 @@ public:
 		draw();
 
 		updateUniformBufferModel();
+		updateUniformBufferParticleSystem();
 		if (camera.updated) {
 			updateUniformBufferView();
 		}
@@ -1499,6 +1522,9 @@ public:
 		if (overlay->header("Settings")) {
 			if (overlay->sliderFloat("Alpha Reference", &uboModelData.alphaReference, 0.0f, 1.0f)) {
 				updateUniformBufferModel();
+			}
+			if (overlay->sliderFloat("Hide Speed", &particleSystem.speed, 0.0f, 0.01f)) {
+				updateUniformBufferParticleSystem();
 			}
 		}
 	}

@@ -1,4 +1,5 @@
 #version 450
+#extension GL_EXT_debug_printf : enable
 
 #include "common_particle.h"
 #include "gpu_cmd.h"
@@ -33,6 +34,12 @@ layout(binding = 6) buffer SSBOGlobalData
 
 layout (local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
+float rand(vec2 xy, float seed)
+{
+	float PHI = 1.61803398874989484820459;  // ¦µ = Golden Ratio  
+    return fract(tan(distance(xy*PHI, xy)*seed)*xy.x);
+}
+
 void main() 
 {
 	uint id = gl_GlobalInvocationID.x;
@@ -62,7 +69,15 @@ void main()
 	else
 	{
 		// previous alived particle
+		float rnd = rand(vec2(id, id), particleSystem.random);
+		particle.color.a -= (rnd * particleSystem.speed);
 
+		if (particle.color.a < 0.0)
+		{
+			particle.color.a = -0.01;
+		}
+
+		//debugPrintfEXT("id %d alpha %f delatT %f\n", id, particle.color.a, particleSystem.deltaT);
 	}
 
 	// update particle
