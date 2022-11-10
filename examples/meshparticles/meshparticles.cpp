@@ -21,7 +21,7 @@ public:
 	vks::Texture2D particlespawn;
 
 	constexpr static uint32_t PARTICLE_COUNT_MAX = 128 * 1024 * 10;
-	constexpr static uint32_t INSTANCE_COUNT = 2;
+	constexpr static uint32_t INSTANCE_COUNT = 1;
 
 	struct UBOModelData {
 		float alphaReference = 0.0f;
@@ -31,6 +31,7 @@ public:
 	struct UBOViewlData {
 		glm::mat4 projection;
 		glm::mat4 modelView;
+		glm::vec2 viewport;
 	} uboViewData;
 
 	struct SRVInstanceData {
@@ -56,7 +57,7 @@ public:
 
 	struct ParticleSystem {					// Compute shader uniform block object
 		float deltaT = 0.0;					// Frame delta time
-		float speed = 0.001;
+		float speed = 0.07;
 		float random = 0.0;
 	} particleSystem;
 
@@ -189,6 +190,8 @@ public:
 		camera.setPerspective(60.0f, (float)width / (float)height, 0.1f, 256.0f);
 
 		rndEngine.seed(benchmark.active ? 0 : (unsigned)time(nullptr));
+
+		settings.vsync = true;
 	}
 
 	~VulkanExample()
@@ -678,7 +681,7 @@ public:
 			*/
 			{
 				std::vector<VkClearValue> clearValues(2);
-				clearValues[0].color = defaultClearColor;
+				clearValues[0].color = { { 0.0f, 0.0f, 0.0f, 0.0f } };
 				clearValues[1].depthStencil = { 1.0f, 0 };
 
 				VkRenderPassBeginInfo renderPassBeginInfo = vks::initializers::renderPassBeginInfo();
@@ -1042,12 +1045,14 @@ public:
 				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 3),
 				// Binding 4 : Particle buffer
 				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 4),
-				// Binding 5 : Depth buffer
-				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_COMPUTE_BIT, 5),
-				// Binding 6 : Global particle data
+				// Binding 5 : Global particle data
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 5),
+				// Binding 6 : GPU indirect command
 				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 6),
-				// Binding 7 : GPU indirect command
-				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 7),
+				// Binding 7 : Depth buffer
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_COMPUTE_BIT, 7),
+				// Binding 8 : Color texture
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_COMPUTE_BIT, 8),
 			};
 
 			VkDescriptorSetLayoutCreateInfo descriptorLayout =
@@ -1150,6 +1155,7 @@ public:
 			std::vector<VkDescriptorImageInfo> imageDescriptors =
 			{
 				vks::initializers::descriptorImageInfo(sampler, depthStencil.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
+				vks::initializers::descriptorImageInfo(sampler, particlespawn.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL),
 			};
 			std::vector<VkWriteDescriptorSet> computeWriteDescriptorSets =
 			{
@@ -1163,12 +1169,14 @@ public:
 				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3, &resourceBuffers.append.descriptor),
 				// Binding 4 : Particle buffer
 				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4, &resourceBuffers.particle.descriptor),
-				// Binding 5 : Depth buffer
-				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 5, &imageDescriptors[0]),
-				// Binding 6 : Global particle data
-				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6, &resourceBuffers.global.descriptor),
-				// Binding 7 : GPU indirect command
-				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 7, &resourceBuffers.gpucmd.descriptor),
+				// Binding 5 : Global particle data
+				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 5, &resourceBuffers.global.descriptor),
+				// Binding 6 : GPU indirect command
+				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6, &resourceBuffers.gpucmd.descriptor),
+				// Binding 7 : Depth buffer
+				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 7, &imageDescriptors[0]),
+				// Binding 8 : Color texture
+				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8, &imageDescriptors[1]),
 			};
 			vkUpdateDescriptorSets(device, static_cast<uint32_t>(computeWriteDescriptorSets.size()), computeWriteDescriptorSets.data(), 0, NULL);
 		}
@@ -1460,6 +1468,7 @@ public:
 	{
 		uboViewData.projection = camera.matrices.perspective;
 		uboViewData.modelView = camera.matrices.view * matModel;
+		uboViewData.viewport = glm::vec2(width, height);
 
 		VK_CHECK_RESULT(uniformBuffers.viewData.map());
 		uniformBuffers.viewData.copyTo(&uboViewData, sizeof(uboViewData));
@@ -1481,16 +1490,16 @@ public:
 		switch (vKeyCode)
 		{
 		case KEY_W:
-			matModel = glm::translate(matModel, glm::vec3(0.0f, 0.0f, -0.1f));
+			matModel = glm::translate(matModel, glm::vec3(0.0f, -0.5f, 0.0f));
 			break;
 		case KEY_S:
-			matModel = glm::translate(matModel, glm::vec3(0.0f, 0.0f, 0.1f));
+			matModel = glm::translate(matModel, glm::vec3(0.0f, 0.5f, 0.0f));
 			break;
 		case KEY_A:
-			matModel = glm::translate(matModel, glm::vec3(-0.1f, 0.0f, 0.0f));
+			matModel = glm::translate(matModel, glm::vec3(-0.5f, 0.0f, 0.0f));
 			break;
 		case KEY_D:
-			matModel = glm::translate(matModel, glm::vec3(0.1f, 0.0f, 0.0f));
+			matModel = glm::translate(matModel, glm::vec3(0.5f, 0.0f, 0.0f));
 			break;
 		}
 
@@ -1549,7 +1558,7 @@ public:
 			if (overlay->sliderFloat("Alpha Reference", &uboModelData.alphaReference, 0.0f, 1.0f)) {
 				updateUniformBufferModel();
 			}
-			if (overlay->sliderFloat("Hide Speed", &particleSystem.speed, 0.0f, 0.01f)) {
+			if (overlay->sliderFloat("Hide Speed", &particleSystem.speed, 0.0f, 0.1f)) {
 				updateUniformBufferParticleSystem();
 			}
 		}

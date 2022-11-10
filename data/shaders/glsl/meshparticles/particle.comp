@@ -25,17 +25,18 @@ layout(binding = 4) buffer ParticleBuffer
    Particle particles[];
 };
 
-layout (binding = 5) uniform sampler2D depthTexture;
-
-layout(binding = 6) buffer SSBOGlobalData
+layout(binding = 5) buffer SSBOGlobalData
 {
    GlobalParticleData globalData;
 };
 
-layout(binding = 7) buffer SSBOGpuCmd
+layout(binding = 6) buffer SSBOGpuCmd
 {
    GpuCmdBuffer gpuCmd;
 };
+
+layout (binding = 7) uniform sampler2D depthTexture;
+layout (binding = 8) uniform sampler2D colorTexture;
 
 layout (local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
@@ -43,6 +44,40 @@ float rand(vec2 xy, float seed)
 {
 	float PHI = 1.61803398874989484820459;  // ¦µ = Golden Ratio  
     return fract(tan(distance(xy*PHI, xy)*seed)*xy.x);
+}
+
+Particle initParticle(uint id, Particle particle)
+{
+	// new particle emitted this frame
+
+	uint jobId = id - globalData.cachedCount;
+	AppendJob job = appendJobs[jobId];
+
+	ivec2 screenPos = ivec2(job.screenPos.x, job.screenPos.y);
+	float depth = texelFetch(depthTexture, screenPos, 0).r;
+
+	vec2 uv = vec2( screenPos.x / viewport.x, screenPos.y / viewport.y );
+	float gray = texture(colorTexture, uv).r;
+
+	particle.pos = vec4(screenPos.x, screenPos.y, 0.0, 1.0);
+	particle.color = vec4(gray, gray, gray, 1.0);
+
+	return particle;
+}
+
+Particle animeParticle(uint id, Particle particle)
+{
+	// previous alived particle
+	float rnd = rand(vec2(id, id), particleSystem.random);
+	particle.color.a -= (rnd * particleSystem.speed);
+
+	if (particle.color.a < 0.0)
+	{
+		particle.color.a = -0.01;
+	}
+
+	//debugPrintfEXT("id %d alpha %f delatT %f\n", id, particle.color.a, particleSystem.deltaT);
+	return particle;
 }
 
 void main() 
@@ -57,34 +92,16 @@ void main()
 	Particle particle = particles[id];
 	if (id >= globalData.cachedCount && id < globalData.cachedCount + globalData.newEmiitedCount)
 	{
-		// new particle emitted this frame
-
-		uint jobId = id - globalData.cachedCount;
-		AppendJob job = appendJobs[jobId];
-
-		ivec2 screenPos = ivec2(job.screenPos.x, job.screenPos.y);
-		float depth = texelFetch(depthTexture, screenPos, 0).r;
-
-		particle.pos = vec4(screenPos.x, screenPos.y, 0.0, 1.0);
-		particle.color = vec4(screenPos.x, screenPos.y, depth, 1.0);
+		particle = initParticle(id, particle);
 	}
 	else
 	{
-		// previous alived particle
-		float rnd = rand(vec2(id, id), particleSystem.random);
-		particle.color.a -= (rnd * particleSystem.speed);
-
-		if (particle.color.a < 0.0)
-		{
-			particle.color.a = -0.01;
-		}
-
-		//debugPrintfEXT("id %d alpha %f delatT %f\n", id, particle.color.a, particleSystem.deltaT);
+		particle = animeParticle(id, particle);
 	}
 
 	// barrier can only sync within work group, but it's safe here,
 	// because what we want is to prevent read after write,
-	// and particle index won't be greater than id
+	// and particle index won't be greater than global id
 
 	barrier();
 

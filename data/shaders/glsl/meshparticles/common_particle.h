@@ -8,7 +8,8 @@ layout(binding = 1) uniform UBOView
 {
 	mat4 projection;
 	mat4 modelView;
-} viewData;
+	vec2 viewport;
+};
 
 struct ParticleSystem
 {
