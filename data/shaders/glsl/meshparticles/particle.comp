@@ -32,6 +32,11 @@ layout(binding = 6) buffer SSBOGlobalData
    GlobalParticleData globalData;
 };
 
+layout(binding = 7) buffer SSBOGpuCmd
+{
+   GpuCmdBuffer gpuCmd;
+};
+
 layout (local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 float rand(vec2 xy, float seed)
@@ -62,9 +67,6 @@ void main()
 
 		particle.pos = vec4(screenPos.x, screenPos.y, 0.0, 1.0);
 		particle.color = vec4(screenPos.x, screenPos.y, depth, 1.0);
-
-		// increase indexs
-		atomicAdd(globalData.particleIndex, 1);
 	}
 	else
 	{
@@ -80,7 +82,24 @@ void main()
 		//debugPrintfEXT("id %d alpha %f delatT %f\n", id, particle.color.a, particleSystem.deltaT);
 	}
 
-	// update particle
-	particles[id] = particle;
+	// barrier can only sync within work group, but it's safe here,
+	// because what we want is to prevent read after write,
+	// and particle index won't be greater than id
+
+	barrier();
+
+	float lifetime = particle.color.a;
+	if (lifetime > 0)
+	{
+		// update particle buffer
+		uint index = atomicAdd(globalData.particleIndex, 1);	
+		particles[index] = particle;
+
+		// update vertices count
+		atomicAdd(gpuCmd.drawCmd.vertexCount, 1);
+		gpuCmd.drawCmd.instanceCount = 1;
+		gpuCmd.drawCmd.firstVertex = 0;
+		gpuCmd.drawCmd.firstInstance = 0;
+	}
 }
 

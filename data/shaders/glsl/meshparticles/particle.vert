@@ -14,7 +14,7 @@ void main()
 	float y = (inPos.y/1080.0) * 2.0 - 1.0;
 	gl_Position = vec4(x, y, 0.0, 1.0);
 
-	gl_PointSize = 5.0;
+	gl_PointSize = 2.0;
 	outColor = inColor;
 }
 

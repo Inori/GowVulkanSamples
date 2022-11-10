@@ -800,6 +800,28 @@ public:
 			}
 
 			{
+				VkBufferMemoryBarrier cmd_barrier =
+				{
+					VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+					nullptr,
+					VK_ACCESS_SHADER_WRITE_BIT,
+					VK_ACCESS_INDIRECT_COMMAND_READ_BIT,
+					queueFamilyIndex,
+					queueFamilyIndex,
+					resourceBuffers.gpucmd.buffer,
+					0,
+					resourceBuffers.gpucmd.size
+				};
+
+				vkCmdPipelineBarrier(
+					commandBuffer,
+					VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+					VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
+					0,
+					0, nullptr,
+					1, &cmd_barrier,
+					0, nullptr);
+
 				VkBufferMemoryBarrier vertex_barrier =
 				{
 					VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
@@ -1024,6 +1046,8 @@ public:
 				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_COMPUTE_BIT, 5),
 				// Binding 6 : Global particle data
 				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 6),
+				// Binding 7 : GPU indirect command
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 7),
 			};
 
 			VkDescriptorSetLayoutCreateInfo descriptorLayout =
@@ -1143,6 +1167,8 @@ public:
 				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 5, &imageDescriptors[0]),
 				// Binding 6 : Global particle data
 				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6, &resourceBuffers.global.descriptor),
+				// Binding 7 : GPU indirect command
+				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 7, &resourceBuffers.gpucmd.descriptor),
 			};
 			vkUpdateDescriptorSets(device, static_cast<uint32_t>(computeWriteDescriptorSets.size()), computeWriteDescriptorSets.data(), 0, NULL);
 		}

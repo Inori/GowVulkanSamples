@@ -27,6 +27,11 @@ void main()
 		globalData.renderCount = 0;
 		globalData.cachedCount = 0;
 		globalData.newEmiitedCount = 0;
+
+		gpuCmdBuffer.dispatchCmd.x = 0;
+
+		//debugPrintfEXT("no particle.\n");
+
 		return;
 	}
 
@@ -42,20 +47,12 @@ void main()
 			// If we reach ring buffer end, we step to the head 
 			// and override front particles
 			particleRenderCount = globalData.particleIndex;
-			globalData.particleIndex = 0;
 		}
 
 		uint groupX = (particleRenderCount + PARTICLE_COMPUTE_WORKGROUP_SIZE - 1) / PARTICLE_COMPUTE_WORKGROUP_SIZE;
-		//debugPrintfEXT("groupX %d\n", groupX);
-
 		gpuCmdBuffer.dispatchCmd.x = groupX;
 		gpuCmdBuffer.dispatchCmd.y = 1;
 		gpuCmdBuffer.dispatchCmd.z = 1;
-
-		gpuCmdBuffer.drawCmd.vertexCount = particleRenderCount;
-		gpuCmdBuffer.drawCmd.instanceCount = 1;
-		gpuCmdBuffer.drawCmd.firstVertex = 0;
-		gpuCmdBuffer.drawCmd.firstInstance = 0;
 	}
 	else
 	{
@@ -63,18 +60,12 @@ void main()
 		gpuCmdBuffer.dispatchCmd.x = 0;
 		gpuCmdBuffer.dispatchCmd.y = 0;
 		gpuCmdBuffer.dispatchCmd.z = 0;
-
-		gpuCmdBuffer.drawCmd.vertexCount = 0;
-		gpuCmdBuffer.drawCmd.instanceCount = 0;
-		gpuCmdBuffer.drawCmd.firstVertex = 0;
-		gpuCmdBuffer.drawCmd.firstInstance = 0;
-
-		//debugPrintfEXT("no particle.\n");
 	}
 
 	globalData.renderCount = particleRenderCount;
 	globalData.cachedCount = globalData.particleIndex;
 	globalData.newEmiitedCount = gpuCmdBuffer.particleCount;
+	globalData.particleIndex = 0;
 }
 
 
