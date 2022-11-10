@@ -5,6 +5,7 @@
 1. [Disintegrating Meshes with Particles in 'God of War'](https://www.youtube.com/watch?v=ajNSrTprWsg)  
 ![meshhide](https://github.com/Inori/GowVulkanSamples/blob/master/screenshots/meshhide.gif?raw=true)  
 ![meshparticle](https://github.com/Inori/GowVulkanSamples/blob/master/screenshots/meshparticle.gif?raw=true)  
+![particle2mesh](https://github.com/Inori/GowVulkanSamples/blob/master/screenshots/particle2mesh.gif?raw=true)  
 
 ### Credits:
 The framework code is based on SaschaWillems's Vulkan Sample, remove most of the example code, left the base framework, making it more lightweight 
