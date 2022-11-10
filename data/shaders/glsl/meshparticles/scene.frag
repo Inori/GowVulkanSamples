@@ -38,14 +38,14 @@ void main()
 
 	// As alpha reference value increase,
 	// model alpha which is less than alpha reference will be invisable.
-	//if (modelAlpha < modelData.alphaReference)
-	//{
-	//	discard;
-	//}
+	if (modelAlpha < modelData.alphaReference)
+	{
+		discard;
+	}
 
 	// Determine if current pixel will be invisable next frame.
 	float nextAlphaReference = modelData.alphaReference + modelData.deltaAlphaEstimation;
-	//if (modelAlpha < nextAlphaReference)
+	if (modelAlpha < nextAlphaReference)
 	{
 		// If it's going to be invisable, append information in the append buffer,
 		// such that it can be replaced by particle next frame.

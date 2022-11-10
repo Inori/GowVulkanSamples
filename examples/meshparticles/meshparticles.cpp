@@ -57,7 +57,7 @@ public:
 
 	struct ParticleSystem {					// Compute shader uniform block object
 		float deltaT = 0.0;					// Frame delta time
-		float speed = 0.07;
+		float speed = 0.007;
 		float random = 0.0;
 	} particleSystem;
 
@@ -191,7 +191,7 @@ public:
 
 		rndEngine.seed(benchmark.active ? 0 : (unsigned)time(nullptr));
 
-		settings.vsync = true;
+		//settings.vsync = true;
 	}
 
 	~VulkanExample()
@@ -1558,7 +1558,7 @@ public:
 			if (overlay->sliderFloat("Alpha Reference", &uboModelData.alphaReference, 0.0f, 1.0f)) {
 				updateUniformBufferModel();
 			}
-			if (overlay->sliderFloat("Hide Speed", &particleSystem.speed, 0.0f, 0.1f)) {
+			if (overlay->sliderFloat("Hide Speed", &particleSystem.speed, 0.0f, 0.01f)) {
 				updateUniformBufferParticleSystem();
 			}
 		}

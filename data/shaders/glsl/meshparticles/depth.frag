@@ -13,8 +13,8 @@ void main()
 
 	// As alpha reference value increase,
 	// model alpha which is less than alpha reference will be invisable.
-	//if (modelAlpha < modelData.alphaReference)
-	//{
-	//	discard;
-	//}
+	if (modelAlpha < modelData.alphaReference)
+	{
+		discard;
+	}
 }
