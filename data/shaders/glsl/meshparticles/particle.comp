@@ -67,11 +67,13 @@ Particle initParticle(uint id, Particle particle)
 
 Particle animeParticle(uint id, Particle particle)
 {
-	// previous alived particle
-	float rnd = rand(vec2(id, id), particleSystem.random);
-	particle.color.a -= (rnd * particleSystem.speed);
+	vec2 uv = vec2( particle.pos.x / viewport.x, particle.pos.y / viewport.y );
+	float alpha = texture(colorTexture, uv).r;
 
-	if (particle.color.a < 0.0)
+	particle.color.a -= particleSystem.speed;
+
+	float age = 1.0 - particle.color.a;
+	if (age > alpha)
 	{
 		particle.color.a = -0.01;
 	}

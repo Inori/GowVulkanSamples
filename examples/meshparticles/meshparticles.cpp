@@ -20,7 +20,7 @@ public:
 	vkglTF::Model sphere;
 	vks::Texture2D particlespawn;
 
-	constexpr static uint32_t PARTICLE_COUNT_MAX = 128 * 1024 * 10;
+	constexpr static uint32_t PARTICLE_COUNT_MAX = 128 * 1024;
 	constexpr static uint32_t INSTANCE_COUNT = 1;
 
 	struct UBOModelData {
@@ -57,7 +57,7 @@ public:
 
 	struct ParticleSystem {					// Compute shader uniform block object
 		float deltaT = 0.0;					// Frame delta time
-		float speed = 0.007;
+		float speed = 0.01;
 		float random = 0.0;
 	} particleSystem;
 
@@ -191,7 +191,7 @@ public:
 
 		rndEngine.seed(benchmark.active ? 0 : (unsigned)time(nullptr));
 
-		//settings.vsync = true;
+		settings.vsync = true;
 	}
 
 	~VulkanExample()
@@ -1487,19 +1487,20 @@ public:
 
 	void keyPressed(uint32_t vKeyCode)
 	{
+		const float speed = 1.5;
 		switch (vKeyCode)
 		{
 		case KEY_W:
-			matModel = glm::translate(matModel, glm::vec3(0.0f, -0.5f, 0.0f));
+			matModel = glm::translate(matModel, glm::vec3(0.0f, -speed, 0.0f));
 			break;
 		case KEY_S:
-			matModel = glm::translate(matModel, glm::vec3(0.0f, 0.5f, 0.0f));
+			matModel = glm::translate(matModel, glm::vec3(0.0f, speed, 0.0f));
 			break;
 		case KEY_A:
-			matModel = glm::translate(matModel, glm::vec3(-0.5f, 0.0f, 0.0f));
+			matModel = glm::translate(matModel, glm::vec3(-speed, 0.0f, 0.0f));
 			break;
 		case KEY_D:
-			matModel = glm::translate(matModel, glm::vec3(0.5f, 0.0f, 0.0f));
+			matModel = glm::translate(matModel, glm::vec3(speed, 0.0f, 0.0f));
 			break;
 		}
 
