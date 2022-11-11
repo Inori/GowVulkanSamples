@@ -20,23 +20,6 @@ layout (local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
 void main() 
 {
-	/*
-	bool restart = (gpuCmdBuffer.particleCount == 0);
-	if(restart)
-	{
-		globalData.particleIndex = 0;
-		globalData.renderCount = 0;
-		globalData.cachedCount = 0;
-		globalData.newEmiitedCount = 0;
-
-		gpuCmdBuffer.dispatchCmd.x = 0;
-
-		//debugPrintfEXT("no particle.\n");
-
-		return;
-	}
-	*/
-
 	// count of particles we are going to render this frame 
 	// equals previous cached count plus new emitted count
 	uint particleRenderCount = globalData.particleIndex + gpuCmdBuffer.particleCount;

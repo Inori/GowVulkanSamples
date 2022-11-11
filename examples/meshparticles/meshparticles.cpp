@@ -21,7 +21,7 @@ public:
 	vks::Texture2D particlespawn;
 
 	constexpr static uint32_t PARTICLE_COUNT_MAX = 128 * 1024;
-	constexpr static uint32_t INSTANCE_COUNT = 1;
+	constexpr static uint32_t INSTANCE_COUNT = 2;
 
 	struct UBOModelData {
 		float alphaReference = 0.0f;
