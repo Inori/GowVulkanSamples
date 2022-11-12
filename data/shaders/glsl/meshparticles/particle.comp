@@ -46,6 +46,25 @@ float rand(vec2 xy, float seed)
     return fract(tan(distance(xy*PHI, xy)*seed)*xy.x);
 }
 
+vec3 ScreenToWorldPosition(vec2 screenPos)
+{
+	ivec2 iscreen = ivec2(screenPos.x, screenPos.y);
+
+	float x = screenPos.x / viewData.viewport.x;
+	float y = screenPos.y / viewData.viewport.y;
+	float z = texelFetch(depthTexture, iscreen, 0).r;
+
+	// scale to (-1.0, 1.0)
+	x = mix(-1.0, 1.0, x);
+	y = mix(-1.0, 1.0, y);
+	z = mix(-1.0, 1.0, z);
+
+	vec4 ndc = vec4(x, y, z, 1.0);
+	vec4 positionMW = viewData.invViewProj * ndc;
+
+	return positionMW.xyz / positionMW.w;
+}
+
 Particle initParticle(uint id, Particle particle)
 {
 	// new particle emitted this frame
@@ -53,13 +72,11 @@ Particle initParticle(uint id, Particle particle)
 	uint jobId = id - globalData.cachedCount;
 	AppendJob job = appendJobs[jobId];
 
-	ivec2 screenPos = ivec2(job.screenPos.x, job.screenPos.y);
-	float depth = texelFetch(depthTexture, screenPos, 0).r;
-
-	vec2 uv = vec2( screenPos.x / viewport.x, screenPos.y / viewport.y );
+	vec2 uv = vec2( job.screenPos.x / viewData.viewport.x, job.screenPos.y / viewData.viewport.y );
 	float gray = texture(colorTexture, uv).r;
 
-	particle.pos = vec4(screenPos.x, screenPos.y, 0.0, 1.0);
+	vec3 worldPos = ScreenToWorldPosition(job.screenPos);
+	particle.pos = vec4(worldPos, 1.0);
 	particle.color = vec4(gray, gray, gray, 1.0);
 
 	return particle;
@@ -67,7 +84,7 @@ Particle initParticle(uint id, Particle particle)
 
 Particle animeParticle(uint id, Particle particle)
 {
-	vec2 uv = vec2( particle.pos.x / viewport.x, particle.pos.y / viewport.y );
+	vec2 uv = vec2( particle.pos.x / viewData.viewport.x, particle.pos.y / viewData.viewport.y );
 	float alpha = texture(colorTexture, uv).r;
 
 	particle.color.a -= particleSystem.speed;

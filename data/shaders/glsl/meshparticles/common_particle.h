@@ -6,10 +6,11 @@ layout(binding = 0) uniform UBOModel
 
 layout(binding = 1) uniform UBOView
 {
-	mat4 projection;
-	mat4 modelView;
+	mat4 view;
+	mat4 viewProj;
+	mat4 invViewProj;
 	vec2 viewport;
-};
+} viewData;
 
 struct ParticleSystem
 {

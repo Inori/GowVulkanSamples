@@ -9,7 +9,7 @@
 #include "VulkanDebug.h"
 #include <iostream>
 
-#define ENABLE_SHADER_DEBUG_PRINTF
+//#define ENABLE_SHADER_DEBUG_PRINTF
 
 namespace vks
 {

@@ -14,16 +14,17 @@ layout (location = 3) out vec3 outPos;
 
 void main() 
 {
-	vec4 instancePos = inPos + instanceData.instancePos[gl_InstanceIndex];
-	gl_Position = viewData.projection * viewData.modelView * instancePos;
+	mat4 model = instanceData.transform[gl_InstanceIndex];
+	gl_Position = viewData.viewProj * model * inPos;
 	
 	outUV = inUV;
 
+	mat4 modelView = viewData.view * model;
 	// Vertex position in view space
-	outPos = vec3(viewData.modelView * inPos);
+	outPos = vec3(modelView * inPos);
 
 	// Normal in view space
-	mat3 normalMatrix = transpose(inverse(mat3(viewData.modelView)));
+	mat3 normalMatrix = transpose(inverse(mat3(modelView)));
 	outNormal = normalMatrix * inNormal;
 
 	outColor = inColor;

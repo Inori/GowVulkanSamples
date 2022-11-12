@@ -29,14 +29,15 @@ public:
 	} uboModelData;
 
 	struct UBOViewlData {
-		glm::mat4 projection;
-		glm::mat4 modelView;
+		glm::mat4 view;
+		glm::mat4 viewProj;
+		glm::mat4 invViewProj;
 		glm::vec2 viewport;
 	} uboViewData;
 
-	struct SRVInstanceData {
-		glm::vec4 instancePos[INSTANCE_COUNT];
-	} srvInstanceData;
+	struct UBOInstanceData {
+		glm::mat4 transform[INSTANCE_COUNT];
+	} uboInstanceData;
 
 	// Append buffer unit
 	struct AppendJob {
@@ -56,9 +57,9 @@ public:
 	} vertexState;
 
 	struct ParticleSystem {					// Compute shader uniform block object
-		float deltaT = 0.0;					// Frame delta time
-		float speed = 0.01;
-		float random = 0.0;
+		float deltaT = 0.0f;				// Frame delta time
+		float speed = 0.01f;
+		float random = 0.0f;
 	} particleSystem;
 
 	struct GlobalParticleData {
@@ -78,12 +79,12 @@ public:
 	struct {
 		vks::Buffer modelData;
 		vks::Buffer viewData;
+		vks::Buffer instancing;
 		vks::Buffer particleSystem;
 	} uniformBuffers;
 
 	struct {
-		vks::Buffer instancing;
-		// VkDispatchIndirectCommand
+		// Dispatch/Draw indirect command
 		vks::Buffer gpucmd;
 		// AppendJob
 		vks::Buffer append;
@@ -198,7 +199,11 @@ public:
 	{
 		particlespawn.destroy();
 
-		resourceBuffers.instancing.destroy();
+		uniformBuffers.modelData.destroy();
+		uniformBuffers.viewData.destroy();
+		uniformBuffers.instancing.destroy();
+		uniformBuffers.particleSystem.destroy();
+
 		resourceBuffers.gpucmd.destroy();
 		resourceBuffers.append.destroy();
 		resourceBuffers.particle.destroy();
@@ -950,7 +955,7 @@ public:
 				// Binding 1 : Shader view data uniform buffer
 				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 1),
 				// Binding 2 : Instance data
-				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 2),
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 2),
 				// Binding 3 : material texture
 				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 3),
 				// Binding 4 : Append buffer
@@ -1084,7 +1089,7 @@ public:
 				// Binding 1: Shader view data uniform buffer
 				vks::initializers::writeDescriptorSet(descriptorSets.scene, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, &uniformBuffers.viewData.descriptor),
 				// Binding 2: Shader instance buffer
-				vks::initializers::writeDescriptorSet(descriptorSets.scene, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2, &resourceBuffers.instancing.descriptor),
+				vks::initializers::writeDescriptorSet(descriptorSets.scene, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2, &uniformBuffers.instancing.descriptor),
 				// Binding 3 : Material texture
 				vks::initializers::writeDescriptorSet(descriptorSets.scene, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 3, &particlespawn.descriptor),
 				// Binding 4 : Append buffer
@@ -1298,28 +1303,6 @@ public:
 
 	void prepareResourceBuffers()
 	{
-		// Instance buffer
-		VK_CHECK_RESULT(vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-			&resourceBuffers.instancing,
-			sizeof(srvInstanceData)));
-
-		// Setup instanced model positions
-		srvInstanceData.instancePos[0] = glm::vec4(0.0f);
-		srvInstanceData.instancePos[1] = glm::vec4(-3.0f, 0.0, -4.0f, 0.0f);
-
-		vks::Buffer stagingBuffer;
-		VK_CHECK_RESULT(vulkanDevice->createBuffer(
-			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-			&stagingBuffer,
-			sizeof(srvInstanceData),
-			&srvInstanceData));
-
-		vulkanDevice->copyBuffer(&stagingBuffer, &resourceBuffers.instancing, queue);
-		stagingBuffer.destroy();
-
 		// Dispatch buffer
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(
 			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT,
@@ -1342,6 +1325,7 @@ public:
 			&resourceBuffers.global,
 			sizeof(GlobalParticleData)));
 
+		vks::Buffer stagingBuffer;
 		GlobalParticleData initGlobal = {};
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(
 			VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
@@ -1361,7 +1345,6 @@ public:
 			&resourceBuffers.particle,
 			particleBufferSize));
 
-		
 
 		// Binding description
 		vertexState.bindingDescriptions.resize(1);
@@ -1414,6 +1397,7 @@ public:
 			&uniformBuffers.viewData,
 			sizeof(uboViewData));
 
+
 		// Particle system
 		ParticleSystem empty = {};
 		vulkanDevice->createBuffer(
@@ -1422,6 +1406,19 @@ public:
 			&uniformBuffers.particleSystem,
 			sizeof(particleSystem),
 			&empty);
+
+		// Instance buffer
+		for (size_t i = 0; i != INSTANCE_COUNT; ++i)
+		{
+			uboInstanceData.transform[i] = glm::mat4(1.0);
+		}
+
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(
+			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+			&uniformBuffers.instancing,
+			sizeof(uboInstanceData),
+			&uboInstanceData));
 
 		// Update
 		updateUniformBufferModel();
@@ -1462,12 +1459,24 @@ public:
 		VK_CHECK_RESULT(uniformBuffers.modelData.map());
 		uniformBuffers.modelData.copyTo(&uboModelData, sizeof(uboModelData));
 		uniformBuffers.modelData.unmap();
+
+		// Instance buffer
+		for (size_t i = 0; i != INSTANCE_COUNT; ++i)
+		{
+			glm::vec3 pos = glm::vec3(-3.0, 0.0, -4.0) * glm::vec3((float)i);
+			uboInstanceData.transform[i] = glm::translate(matModel, pos);
+		}
+
+		VK_CHECK_RESULT(uniformBuffers.instancing.map());
+		uniformBuffers.instancing.copyTo(&uboInstanceData, sizeof(uboInstanceData));
+		uniformBuffers.instancing.unmap();
 	}
 
 	void updateUniformBufferView()
 	{
-		uboViewData.projection = camera.matrices.perspective;
-		uboViewData.modelView = camera.matrices.view * matModel;
+		uboViewData.view = camera.matrices.view;
+		uboViewData.viewProj = camera.matrices.perspective * camera.matrices.view;
+		uboViewData.invViewProj = glm::inverse(uboViewData.viewProj);
 		uboViewData.viewport = glm::vec2(width, height);
 
 		VK_CHECK_RESULT(uniformBuffers.viewData.map());

@@ -7,13 +7,14 @@ layout(binding = 0) uniform UBOModel
 
 layout(binding = 1) uniform UBOView
 {
-	mat4 projection;
-	mat4 modelView;
+	mat4 view;
+	mat4 viewProj;
+	mat4 invViewProj;
 	vec2 viewport;
 } viewData;
 
-layout(binding = 2) buffer SRVInstance
+layout(binding = 2) uniform UBOInstance
 {
-	vec4 instancePos[];
+	mat4 transform[2];
 } instanceData;
 
