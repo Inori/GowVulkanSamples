@@ -10,9 +10,6 @@ layout (location = 0) out vec4 outColor;
 void main() 
 {
 	gl_Position = viewData.viewProj * inPos;
-	//float x = (inPos.x/1920.0) * 2.0 - 1.0;
-	//float y = (inPos.y/1080.0) * 2.0 - 1.0;
-	//gl_Position = vec4(x, y, 0.0, 1.0);
 
 	gl_PointSize = 2.0;
 	outColor = inColor;
