@@ -82,20 +82,41 @@ Particle initParticle(uint id, Particle particle)
 	return particle;
 }
 
-Particle animeParticle(uint id, Particle particle)
+Particle animateParticle(uint id, Particle particle)
 {
+	float rnd = rand(vec2(id, id), particleSystem.random);
+	/*
+		animate particle position
+	*/
+
+	particle.pos.x += mix(-10.0, 10.0, rnd) * 0.0001;
+	particle.pos.y += particleSystem.speed * 0.0001;
+	//particle.pos.z += mix(-2.0, 2.0, rnd) * 0.0001;
+
+	/*
+		maintain particle lifetime
+	*/
+
+	
+	particle.color.a -= (rnd * particleSystem.deltaT * particleSystem.speed);
+
+	/*
+	// read noise lifetime threshold
 	vec2 uv = vec2( particle.pos.x / viewData.viewport.x, particle.pos.y / viewData.viewport.y );
-	float alpha = texture(colorTexture, uv).r;
+	float threshold = texture(colorTexture, uv).r;
 
-	particle.color.a -= particleSystem.speed;
+	// decrease lifetime
+	particle.color.a -= particleSystem.speed * 0.0001;
 
+	// if age is greater than threshold, hide the particle
 	float age = 1.0 - particle.color.a;
-	if (age > alpha)
+	if (age > threshold)
 	{
-		particle.color.a = -0.01;
+		particle.color.a = -1.0;
 	}
+	*/
 
-	//debugPrintfEXT("id %d alpha %f delatT %f\n", id, particle.color.a, particleSystem.deltaT);
+	//debugPrintfEXT("rnd %f\n", rnd);
 	return particle;
 }
 
@@ -115,7 +136,7 @@ void main()
 	}
 	else
 	{
-		particle = animeParticle(id, particle);
+		particle = animateParticle(id, particle);
 	}
 
 	// barrier can only sync within work group, but it's safe here,
@@ -132,6 +153,7 @@ void main()
 		particles[index] = particle;
 
 		// update vertices count
+		// and construct draw command
 		atomicAdd(gpuCmd.drawCmd.vertexCount, 1);
 		gpuCmd.drawCmd.instanceCount = 1;
 		gpuCmd.drawCmd.firstVertex = 0;
