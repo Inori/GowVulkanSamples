@@ -13,9 +13,6 @@ layout(binding = 1) buffer SSBOGlobalData
    GlobalParticleData globalData;
 };
 
-// Work group size of particle.comp
-#define PARTICLE_COMPUTE_WORKGROUP_SIZE 64
-
 layout (local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
 void main() 
@@ -32,6 +29,9 @@ void main()
 			// If we reach ring buffer end, we step to the head 
 			// and override front particles
 			particleRenderCount = globalData.particleIndex;
+			globalData.particleIndex = 0;
+
+			//debugPrintfEXT("reloop\n");
 		}
 
 		uint groupX = (particleRenderCount + PARTICLE_COMPUTE_WORKGROUP_SIZE - 1) / PARTICLE_COMPUTE_WORKGROUP_SIZE;

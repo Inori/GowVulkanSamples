@@ -1,4 +1,7 @@
 
+// Work group size of particle.comp
+#define PARTICLE_COMPUTE_WORKGROUP_SIZE 64
+
 struct VkDispatchIndirectCommand
 {
 	uint x;

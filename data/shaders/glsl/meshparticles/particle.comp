@@ -20,25 +20,30 @@ layout(binding = 3) buffer AppendBuffer
    AppendJob appendJobs[];
 };
 
-layout(binding = 4) buffer ParticleBuffer
+layout(binding = 4) buffer SpawnBuffer
+{
+   Particle ring[];
+};
+
+layout(binding = 5) buffer ParticleBuffer
 {
    Particle particles[];
 };
 
-layout(binding = 5) buffer SSBOGlobalData
+layout(binding = 6) buffer SSBOGlobalData
 {
    GlobalParticleData globalData;
 };
 
-layout(binding = 6) buffer SSBOGpuCmd
+layout(binding = 7) buffer SSBOGpuCmd
 {
    GpuCmdBuffer gpuCmd;
 };
 
-layout (binding = 7) uniform sampler2D depthTexture;
-layout (binding = 8) uniform sampler2D colorTexture;
+layout (binding = 8) uniform sampler2D depthTexture;
+layout (binding = 9) uniform sampler2D colorTexture;
 
-layout (local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+layout (local_size_x = PARTICLE_COMPUTE_WORKGROUP_SIZE, local_size_y = 1, local_size_z = 1) in;
 
 float rand(vec2 xy, float seed)
 {
@@ -46,7 +51,7 @@ float rand(vec2 xy, float seed)
     return fract(tan(distance(xy*PHI, xy)*seed)*xy.x);
 }
 
-vec3 ScreenToWorldPosition(vec2 screenPos)
+vec3 screenToWorldPosition(vec2 screenPos)
 {
 	ivec2 iscreen = ivec2(screenPos.x, screenPos.y);
 
@@ -65,9 +70,10 @@ vec3 ScreenToWorldPosition(vec2 screenPos)
 	return positionMW.xyz / positionMW.w;
 }
 
-Particle initParticle(uint id, Particle particle)
+Particle initParticle(uint id)
 {
 	// new particle emitted this frame
+	Particle particle;
 
 	uint jobId = id - globalData.cachedCount;
 	AppendJob job = appendJobs[jobId];
@@ -75,12 +81,14 @@ Particle initParticle(uint id, Particle particle)
 	vec2 uv = vec2( job.screenPos.x / viewData.viewport.x, job.screenPos.y / viewData.viewport.y );
 	float gray = texture(colorTexture, uv).r;
 
-	vec3 worldPos = ScreenToWorldPosition(job.screenPos);
+	vec3 worldPos = screenToWorldPosition(job.screenPos);
 	particle.pos = vec4(worldPos, 1.0);
 	particle.color = vec4(gray, gray, gray, 1.0);
+	//particle.prevPos = particle.pos;
 
 	return particle;
 }
+
 
 Particle animateParticle(uint id, Particle particle)
 {
@@ -89,24 +97,42 @@ Particle animateParticle(uint id, Particle particle)
 		animate particle position
 	*/
 
-	particle.pos.x += mix(-10.0, 10.0, rnd) * 0.0001;
-	particle.pos.y += particleSystem.speed * 0.0001;
+	//particle.pos.x += mix(-10.0, 10.0, rnd) * 0.0001;
+	//particle.pos.y += particleSystem.speed * 0.0001;
 	//particle.pos.z += mix(-2.0, 2.0, rnd) * 0.0001;
 
+	// Verlet Integration
+	// https://owlree.blog/posts/simulating-a-rope.html
+
+	//vec3 a = vec3(0.0);
+	//vec3 posCopy = particle.pos.xyz;
+	//particle.pos.xyz = 2.0 * particle.pos.xyz - particle.prevPos.xyz + pow(particleSystem.deltaT, 2) * a;
+	//particle.prevPos.xyz = posCopy;
+	
 	/*
 		maintain particle lifetime
 	*/
 
-	
-	particle.color.a -= (rnd * particleSystem.deltaT * particleSystem.speed);
+	float age = particleSystem.deltaT * particleSystem.speed;
+	particle.color.a -= age;
+	//if (particle.color.a < 0.0)
+	//{
+	//	particle.color.a = -1.0;
+	//}
 
 	/*
 	// read noise lifetime threshold
-	vec2 uv = vec2( particle.pos.x / viewData.viewport.x, particle.pos.y / viewData.viewport.y );
+	vec4 screen = viewData.viewProj * particle.pos;
+	vec2 uv = (vec2( screen.x, screen.y) + vec2(1.0)) / 2.0;
+	uv = clamp(uv, vec2(0.0), vec2(1.0));
 	float threshold = texture(colorTexture, uv).r;
 
 	// decrease lifetime
-	particle.color.a -= particleSystem.speed * 0.0001;
+	uint flag = floatBitsToUint(rnd) & 1;
+	float dec = rnd * particleSystem.deltaT * particleSystem.speed * 0.0001;
+	particle.color.a -= dec;
+
+	//debugPrintfEXT("uv %v2f threshold %f dec %f alpha %f\n", uv, threshold, dec, particle.color.a);
 
 	// if age is greater than threshold, hide the particle
 	float age = 1.0 - particle.color.a;
@@ -116,7 +142,7 @@ Particle animateParticle(uint id, Particle particle)
 	}
 	*/
 
-	//debugPrintfEXT("rnd %f\n", rnd);
+	//debugPrintfEXT("age %f rnd %f\n", age, rnd);
 	return particle;
 }
 
@@ -129,27 +155,24 @@ void main()
 		return;
 	}
 
-	Particle particle = particles[id];
+	Particle particle;
+
 	if (id >= globalData.cachedCount && id < globalData.cachedCount + globalData.newEmiitedCount)
 	{
-		particle = initParticle(id, particle);
+		particle = initParticle(id);
 	}
 	else
 	{
-		particle = animateParticle(id, particle);
+		particle = animateParticle(id, ring[id]);
 	}
 
-	// barrier can only sync within work group, but it's safe here,
-	// because what we want is to prevent read after write,
-	// and particle index won't be greater than global id
-
-	barrier();
+	ring[id] = particle;
 
 	float lifetime = particle.color.a;
-	if (lifetime > 0)
+	if (lifetime > 0.0)
 	{
 		// update particle buffer
-		uint index = atomicAdd(globalData.particleIndex, 1);	
+		uint index = atomicAdd(globalData.particleIndex, 1);
 		particles[index] = particle;
 
 		// update vertices count

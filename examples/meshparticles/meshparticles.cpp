@@ -20,7 +20,7 @@ public:
 	vkglTF::Model sphere;
 	vks::Texture2D particlespawn;
 
-	constexpr static uint32_t PARTICLE_COUNT_MAX = 128 * 1024;
+	constexpr static uint32_t PARTICLE_COUNT_MAX = 128 * 1024 * 10;
 	constexpr static uint32_t INSTANCE_COUNT = 2;
 
 	struct UBOModelData {
@@ -57,8 +57,9 @@ public:
 	} vertexState;
 
 	struct ParticleSystem {					// Compute shader uniform block object
+		glm::vec3 wind = glm::vec3(0.0f);
 		float deltaT = 0.0f;				// Frame delta time
-		float speed = 2.0f;
+		float speed = 0.5f;
 		float random = 0.0f;
 	} particleSystem;
 
@@ -88,7 +89,9 @@ public:
 		vks::Buffer gpucmd;
 		// AppendJob
 		vks::Buffer append;
-		// Particles ring buffer
+		// Particle ring buffer
+		vks::Buffer spawn;
+		// Particle index buffer
 		vks::Buffer particle;
 		// Global particle data
 		vks::Buffer global;
@@ -206,7 +209,7 @@ public:
 
 		resourceBuffers.gpucmd.destroy();
 		resourceBuffers.append.destroy();
-		resourceBuffers.particle.destroy();
+		resourceBuffers.spawn.destroy();
 
 		vkDestroySampler(device, sampler, nullptr);
 
@@ -1048,16 +1051,18 @@ public:
 				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 2),
 				// Binding 3 : Append buffer
 				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 3),
-				// Binding 4 : Particle buffer
+				// Binding 4 : Spawn buffer
 				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 4),
-				// Binding 5 : Global particle data
+				// Binding 5 : Particle buffer
 				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 5),
-				// Binding 6 : GPU indirect command
+				// Binding 6 : Global particle data
 				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 6),
-				// Binding 7 : Depth buffer
-				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_COMPUTE_BIT, 7),
-				// Binding 8 : Color texture
+				// Binding 7 : GPU indirect command
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_COMPUTE_BIT, 7),
+				// Binding 8 : Depth buffer
 				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_COMPUTE_BIT, 8),
+				// Binding 9 : Color texture
+				vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_COMPUTE_BIT, 9),
 			};
 
 			VkDescriptorSetLayoutCreateInfo descriptorLayout =
@@ -1172,16 +1177,18 @@ public:
 				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2, &uniformBuffers.particleSystem.descriptor),
 				// Binding 3 : Append buffer
 				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3, &resourceBuffers.append.descriptor),
-				// Binding 4 : Particle buffer
-				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4, &resourceBuffers.particle.descriptor),
-				// Binding 5 : Global particle data
-				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 5, &resourceBuffers.global.descriptor),
-				// Binding 6 : GPU indirect command
-				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6, &resourceBuffers.gpucmd.descriptor),
-				// Binding 7 : Depth buffer
-				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 7, &imageDescriptors[0]),
-				// Binding 8 : Color texture
-				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8, &imageDescriptors[1]),
+				// Binding 4 : Spawn buffer
+				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4, &resourceBuffers.spawn.descriptor),
+				// Binding 5 : Particle buffer
+				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 5, &resourceBuffers.particle.descriptor),
+				// Binding 6 : Global particle data
+				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 6, &resourceBuffers.global.descriptor),
+				// Binding 7 : GPU indirect command
+				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 7, &resourceBuffers.gpucmd.descriptor),
+				// Binding 8 : Depth buffer
+				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 8, &imageDescriptors[0]),
+				// Binding 9 : Color texture
+				vks::initializers::writeDescriptorSet(descriptorSets.compute, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 9, &imageDescriptors[1]),
 			};
 			vkUpdateDescriptorSets(device, static_cast<uint32_t>(computeWriteDescriptorSets.size()), computeWriteDescriptorSets.data(), 0, NULL);
 		}
@@ -1340,11 +1347,16 @@ public:
 		// Particle buffer
 		VkDeviceSize particleBufferSize = PARTICLE_COUNT_MAX * sizeof(Particle);
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			&resourceBuffers.spawn,
+			particleBufferSize));
+
+		VK_CHECK_RESULT(vulkanDevice->createBuffer(
 			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 			&resourceBuffers.particle,
 			particleBufferSize));
-
 
 		// Binding description
 		vertexState.bindingDescriptions.resize(1);
@@ -1568,7 +1580,7 @@ public:
 			if (overlay->sliderFloat("Alpha Reference", &uboModelData.alphaReference, 0.0f, 1.0f)) {
 				updateUniformBufferModel();
 			}
-			if (overlay->sliderFloat("Hide Speed", &particleSystem.speed, 0.0f, 5.0f)) {
+			if (overlay->sliderFloat("Hide Speed", &particleSystem.speed, 0.0f, 1.0f)) {
 				updateUniformBufferParticleSystem();
 			}
 		}

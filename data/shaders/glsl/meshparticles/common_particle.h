@@ -14,6 +14,7 @@ layout(binding = 1) uniform UBOView
 
 struct ParticleSystem
 {
+	vec3 wind;
 	float deltaT;
 	float speed;
 	float random;
