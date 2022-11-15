@@ -18,6 +18,7 @@ struct ParticleSystem
 	float deltaT;
 	float speed;
 	float random;
+	uint frameNum;
 };
 
 layout(std140, binding = 2) uniform ParticleSystemBuffer

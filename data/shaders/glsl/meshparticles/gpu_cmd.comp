@@ -17,21 +17,30 @@ layout (local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
 void main() 
 {
+	if (gpuCmdBuffer.particleCount == 0)
+	{
+		globalData.renderCount = 0;
+		globalData.cachedCount = 0;
+		globalData.newEmiitedCount = 0;
+		globalData.particleIndex = 0;
+
+		gpuCmdBuffer.dispatchCmd.x = 0;
+		gpuCmdBuffer.drawCmd.vertexCount = 0;
+		return;
+	}
 	// count of particles we are going to render this frame 
 	// equals previous cached count plus new emitted count
-	uint particleRenderCount = globalData.particleIndex + gpuCmdBuffer.particleCount;
+	uint particleRenderCount = globalData.cachedCount + gpuCmdBuffer.particleCount;
 
 	if (particleRenderCount != 0)
 	{
-
 		if (particleRenderCount >= globalData.particleCountMax)
 		{
 			// If we reach ring buffer end, we step to the head 
 			// and override front particles
-			particleRenderCount = globalData.particleIndex;
-			globalData.particleIndex = 0;
-
-			//debugPrintfEXT("reloop\n");
+			particleRenderCount = globalData.particleCountMax;
+			globalData.cachedCount = 0;
+			debugPrintfEXT("reloop\n");
 		}
 
 		uint groupX = (particleRenderCount + PARTICLE_COMPUTE_WORKGROUP_SIZE - 1) / PARTICLE_COMPUTE_WORKGROUP_SIZE;
@@ -48,7 +57,6 @@ void main()
 	}
 
 	globalData.renderCount = particleRenderCount;
-	globalData.cachedCount = globalData.particleIndex;
 	globalData.newEmiitedCount = gpuCmdBuffer.particleCount;
 	globalData.particleIndex = 0;
 }

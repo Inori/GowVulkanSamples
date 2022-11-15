@@ -48,6 +48,8 @@ public:
 	struct Particle {
 		glm::vec4 pos;
 		glm::vec4 color;
+		glm::uint frame;
+		glm::uint pad[3];
 	};
 
 	struct ParticleVertexState {
@@ -59,8 +61,9 @@ public:
 	struct ParticleSystem {					// Compute shader uniform block object
 		glm::vec3 wind = glm::vec3(0.0f);
 		float deltaT = 0.0f;				// Frame delta time
-		float speed = 0.5f;
+		float speed = 20.0f;
 		float random = 0.0f;
+		glm::uint frameNum = 0;
 	} particleSystem;
 
 	struct GlobalParticleData {
@@ -1295,6 +1298,9 @@ public:
 			VkPipelineColorBlendStateCreateInfo colorBlendState = vks::initializers::pipelineColorBlendStateCreateInfo(1, &blendAttachmentState);
 			pipelineCreateInfo.pColorBlendState = &colorBlendState;
 
+			VkPipelineDepthStencilStateCreateInfo depthStencilState = vks::initializers::pipelineDepthStencilStateCreateInfo(VK_FALSE, VK_FALSE, VK_COMPARE_OP_NEVER);
+			pipelineCreateInfo.pDepthStencilState = &depthStencilState;
+
 			// Empty vertex input state for fullscreen passes
 			VkPipelineVertexInputStateCreateInfo emptyVertexInputState = vks::initializers::pipelineVertexInputStateCreateInfo();
 			pipelineCreateInfo.pVertexInputState = &emptyVertexInputState;
@@ -1500,6 +1506,11 @@ public:
 	{
 		particleSystem.deltaT = frameTimer;
 		particleSystem.random = rnd(1.0f);
+		particleSystem.frameNum += 1;
+
+		float windX = glm::radians(timer * 360.0 + 60.0);
+		float windY = glm::sin(windX);
+		particleSystem.wind = glm::vec3(windX, windY, 0.0) * glm::vec3(rnd(1.0f));
 
 		VK_CHECK_RESULT(uniformBuffers.particleSystem.map());
 		uniformBuffers.particleSystem.copyTo(&particleSystem, sizeof(particleSystem));
@@ -1580,7 +1591,7 @@ public:
 			if (overlay->sliderFloat("Alpha Reference", &uboModelData.alphaReference, 0.0f, 1.0f)) {
 				updateUniformBufferModel();
 			}
-			if (overlay->sliderFloat("Hide Speed", &particleSystem.speed, 0.0f, 1.0f)) {
+			if (overlay->sliderFloat("Hide Speed", &particleSystem.speed, 0.0f, 100.0f)) {
 				updateUniformBufferParticleSystem();
 			}
 		}
