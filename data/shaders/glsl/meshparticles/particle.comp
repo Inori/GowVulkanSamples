@@ -73,6 +73,8 @@ vec3 screenToWorldPosition(vec2 screenPos)
 
 Particle initParticle(uint id)
 {
+	float rnd = rand(vec2(id, id), particleSystem.random);
+
 	// new particle emitted this frame
 	Particle particle;
 
@@ -98,7 +100,7 @@ Particle animateParticle(uint id, Particle particle)
 		animate particle position
 	*/
 
-	vec3 gravity = vec3(0.0, 0.2, 0.0);
+	vec3 gravity = vec3(0.0, 0.2, 0.0) * rnd;
 	vec3 v = gravity + particleSystem.wind * rnd;
 	particle.pos.xyz += v * particleSystem.deltaT;
 
@@ -107,7 +109,8 @@ Particle animateParticle(uint id, Particle particle)
 	*/
 
 	uint framePhase = particleSystem.frameNum - particle.frame;
-	float age = float(framePhase) * (particleSystem.deltaT * particleSystem.speed) * 0.01;
+	//float age = float(framePhase) * (particleSystem.deltaT * particleSystem.speed) * 0.01;
+	float age = float(framePhase) * (1.0 / particleSystem.speed) * 0.01;
 	float lifetime = 1.0 - age;
 	if (lifetime < 0)
 	{

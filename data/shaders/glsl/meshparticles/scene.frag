@@ -43,9 +43,11 @@ void main()
 		discard;
 	}
 
+	uint flag = floatBitsToUint(inUV.x) & 1;
+
 	// Determine if current pixel will be invisable next frame.
 	float nextAlphaReference = modelData.alphaReference + modelData.deltaAlphaEstimation;
-	if (modelAlpha < nextAlphaReference)
+	if (modelAlpha < nextAlphaReference && flag != 0)
 	{
 		// If it's going to be invisable, append information in the append buffer,
 		// such that it can be replaced by particle next frame.

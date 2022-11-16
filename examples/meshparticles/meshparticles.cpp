@@ -27,7 +27,7 @@ public:
 		float alphaReference = 0.0f;
 		float deltaAlphaEstimation = 0.0;
 	} uboModelData;
-
+	
 	struct UBOViewlData {
 		glm::mat4 view;
 		glm::mat4 viewProj;
@@ -61,7 +61,7 @@ public:
 	struct ParticleSystem {					// Compute shader uniform block object
 		glm::vec3 wind = glm::vec3(0.0f);
 		float deltaT = 0.0f;				// Frame delta time
-		float speed = 20.0f;
+		float speed = 100.0f;
 		float random = 0.0f;
 		glm::uint frameNum = 0;
 	} particleSystem;
@@ -1508,7 +1508,7 @@ public:
 		particleSystem.random = rnd(1.0f);
 		particleSystem.frameNum += 1;
 
-		float windX = glm::radians(timer * 360.0 + 60.0);
+		float windX = glm::radians<float>(timer * 360.0 + 60.0);
 		float windY = glm::sin(windX);
 		particleSystem.wind = glm::vec3(windX, windY, 0.0) * glm::vec3(rnd(1.0f));
 
